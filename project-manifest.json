@@ -1,0 +1,25 @@
+{
+  "project": "Broadcast Ecosystem",
+  "version": "design-v0.1",
+  "target": "Windows desktop",
+  "stack": [
+    "Tauri 2",
+    "React",
+    "TypeScript",
+    "Rust"
+  ],
+  "primary_output": "SHOUTcast",
+  "core_features": [
+    "broadcast",
+    "recording",
+    "live transcription",
+    "plugin ecosystem",
+    "AI/MCP control"
+  ],
+  "principles": [
+    "anti-slop",
+    "broadcast-first",
+    "AI-optional",
+    "motion-with-purpose"
+  ]
+}
