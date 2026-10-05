@@ -43,12 +43,12 @@
 
 ## Phase 4 — AI / MCP
 
-- [ ] control API hardening
-- [ ] MCP server
-- [ ] AI assistant
-- [ ] telemetry analysis
-- [ ] transcript summarization
-- [ ] metadata generation
+- [x] control API hardening
+- [x] MCP server
+- [x] AI assistant
+- [x] telemetry analysis
+- [x] transcript summarization
+- [x] metadata generation
 
 ## Phase 5 — Expansion
 
