@@ -52,8 +52,8 @@
 
 ## Phase 5 — Expansion
 
-- [ ] Icecast
-- [ ] additional codecs
-- [ ] advanced scheduling
-- [ ] plugin registry
-- [ ] multi-station profiles
+- [x] Icecast
+- [x] additional codecs
+- [x] advanced scheduling
+- [x] plugin registry
+- [x] multi-station profiles

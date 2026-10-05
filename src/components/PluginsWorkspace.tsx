@@ -1,45 +1,95 @@
 import React, { useState, useEffect } from 'react';
 import { pluginHost } from '../services/plugin/pluginHost';
-import type { PluginInstance } from '../services/plugin/types';
+import { pluginRegistry, RegistryPluginItem } from '../services/plugin/pluginRegistry';
+import type { PluginInstance, PluginManifest } from '../services/plugin/types';
 
 export const PluginsWorkspace: React.FC = () => {
+  const [activeSubTab, setActiveSubTab] = useState<'installed' | 'registry'>('installed');
   const [plugins, setPlugins] = useState<PluginInstance[]>(pluginHost.getPlugins());
+  const [catalog, setCatalog] = useState<RegistryPluginItem[]>(pluginRegistry.getCatalog());
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
+  const [searchQuery, setSearchQuery] = useState<string>('');
+
+  // Import Modal
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [importJson, setImportJson] = useState('');
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   useEffect(() => {
-    const unsub = pluginHost.subscribe((list) => {
+    const unsubHost = pluginHost.subscribe((list) => {
       setPlugins(list);
     });
-    return () => unsub();
+
+    const unsubReg = pluginRegistry.subscribe(() => {
+      setCatalog(pluginRegistry.getCatalog());
+    });
+
+    return () => {
+      unsubHost();
+      unsubReg();
+    };
   }, []);
+
+  const showToast = (msg: string) => {
+    setToastMessage(msg);
+    setTimeout(() => setToastMessage(null), 3000);
+  };
 
   const handleTogglePlugin = async (id: string, currentlyEnabled: boolean) => {
     if (currentlyEnabled) {
       await pluginHost.disablePlugin(id);
+      showToast(`Plugin disabled: ${id}`);
     } else {
       await pluginHost.enablePlugin(id);
+      showToast(`Plugin enabled: ${id}`);
     }
   };
 
   const handleSimulateCrash = (id: string) => {
     pluginHost.simulateCrash(id);
+    showToast(`Simulated crash on ${id}. Audio engine remains unaffected.`);
   };
 
   const handleRestartPlugin = async (id: string) => {
     await pluginHost.enablePlugin(id);
+    showToast(`Restarted plugin: ${id}`);
   };
 
-  const categories: { id: string; label: string }[] = [
-    { id: 'all', label: 'ALL PLUGINS' },
-    { id: 'audio_effect', label: 'AUDIO EFFECTS' },
-    { id: 'metadata', label: 'METADATA' },
-    { id: 'output', label: 'OUTPUTS' },
-  ];
+  const handleInstallFromRegistry = async (pluginId: string, name: string) => {
+    const success = await pluginRegistry.installPlugin(pluginId);
+    if (success) {
+      showToast(`Installed and enabled "${name}"`);
+    } else {
+      showToast(`Failed to install "${name}"`);
+    }
+  };
 
-  const filteredPlugins = plugins.filter((p) => {
-    if (selectedCategory === 'all') return true;
-    return p.manifest.category === selectedCategory;
-  });
+  const handleUninstall = async (pluginId: string, name: string) => {
+    const success = await pluginRegistry.uninstallPlugin(pluginId);
+    if (success) {
+      showToast(`Uninstalled "${name}"`);
+    } else {
+      showToast(`Failed to uninstall "${name}"`);
+    }
+  };
+
+  const handleImportCustom = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      const manifest: PluginManifest = JSON.parse(importJson);
+      if (!manifest.id || !manifest.name) {
+        showToast('Invalid manifest: "id" and "name" are required');
+        return;
+      }
+      await pluginHost.registerPlugin(manifest);
+      await pluginHost.enablePlugin(manifest.id);
+      setShowImportModal(false);
+      setImportJson('');
+      showToast(`Custom plugin "${manifest.name}" imported and running`);
+    } catch (err: any) {
+      showToast(`Import error: ${err.message}`);
+    }
+  };
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -55,235 +105,592 @@ export const PluginsWorkspace: React.FC = () => {
     }
   };
 
+  const categories = [
+    { id: 'all', label: 'ALL CATEGORIES' },
+    { id: 'AudioEffect', label: 'AUDIO EFFECTS' },
+    { id: 'Utility', label: 'UTILITIES' },
+    { id: 'Metadata', label: 'METADATA' },
+    { id: 'Automation', label: 'AUTOMATION' },
+    { id: 'Output', label: 'OUTPUTS' },
+  ];
+
+  const filteredInstalled = plugins.filter((p) => {
+    if (selectedCategory !== 'all' && p.manifest.category.toLowerCase() !== selectedCategory.toLowerCase()) {
+      return false;
+    }
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      return p.manifest.name.toLowerCase().includes(q) || p.manifest.description.toLowerCase().includes(q);
+    }
+    return true;
+  });
+
+  const filteredRegistry = catalog.filter((item) => {
+    if (selectedCategory !== 'all' && item.manifest.category.toLowerCase() !== selectedCategory.toLowerCase()) {
+      return false;
+    }
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      return (
+        item.manifest.name.toLowerCase().includes(q) ||
+        item.manifest.description.toLowerCase().includes(q) ||
+        item.author.toLowerCase().includes(q) ||
+        item.tags.some((t) => t.toLowerCase().includes(q))
+      );
+    }
+    return true;
+  });
+
   return (
     <div
       style={{
-        flex: 1,
         display: 'flex',
         flexDirection: 'column',
-        padding: 'var(--space-5)',
-        gap: 'var(--space-4)',
+        width: '100%',
+        height: '100%',
         backgroundColor: 'var(--color-bg)',
-        overflowY: 'auto',
+        overflow: 'hidden',
       }}
     >
+      {/* Top Header */}
       <header
         style={{
           display: 'flex',
-          justifyContent: 'space-between',
           alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: 'var(--space-3) var(--space-6)',
           backgroundColor: 'var(--color-surface)',
-          padding: 'var(--space-3) var(--space-4)',
-          borderRadius: 'var(--radius-md)',
-          border: '1px solid var(--color-border)',
+          borderBottom: '1px solid var(--color-border)',
         }}
       >
         <div>
-          <h1 style={{ fontSize: 'var(--text-h2)', fontWeight: 700, margin: 0 }}>
-            Broadcast Plugin Host
+          <h1 style={{ fontSize: 'var(--text-h2)', margin: 0, fontWeight: 700, textTransform: 'uppercase' }}>
+            Ecosystem Plugins & Extensions
           </h1>
-          <p style={{ fontSize: 'var(--text-small)', color: 'var(--color-text-secondary)', marginTop: '2px' }}>
-            Isolated worker sandboxes for real-time DSP, metadata scrapers, and external connectors.
+          <p style={{ fontSize: 'var(--text-micro)', color: 'var(--color-text-secondary)', margin: '2px 0 0 0' }}>
+            Isolated worker execution ensures plugin crashes never interrupt the on-air audio transmission.
           </p>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
-          <span
+        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
+          {/* Sub-tab switcher */}
+          <div
             style={{
-              fontSize: 'var(--text-micro)',
-              padding: '2px 8px',
-              backgroundColor: 'rgba(217, 255, 85, 0.1)',
-              color: 'var(--color-live)',
-              border: '1px solid rgba(217, 255, 85, 0.25)',
+              display: 'flex',
+              backgroundColor: 'var(--color-bg)',
               borderRadius: 'var(--radius-sm)',
-              fontWeight: 700,
+              padding: '2px',
+              border: '1px solid var(--color-border)',
             }}
           >
-            FAILURE ISOLATION ACTIVE
-          </span>
-        </div>
-      </header>
+            <button
+              onClick={() => setActiveSubTab('installed')}
+              style={{
+                padding: 'var(--space-1) var(--space-3)',
+                borderRadius: 'var(--radius-sm)',
+                border: 'none',
+                backgroundColor: activeSubTab === 'installed' ? 'var(--color-surface-elevated)' : 'transparent',
+                color: activeSubTab === 'installed' ? 'var(--color-live)' : 'var(--color-text-secondary)',
+                fontWeight: activeSubTab === 'installed' ? 700 : 400,
+                fontSize: 'var(--text-small)',
+                cursor: 'pointer',
+              }}
+            >
+              Installed ({plugins.length})
+            </button>
+            <button
+              onClick={() => setActiveSubTab('registry')}
+              style={{
+                padding: 'var(--space-1) var(--space-3)',
+                borderRadius: 'var(--radius-sm)',
+                border: 'none',
+                backgroundColor: activeSubTab === 'registry' ? 'var(--color-surface-elevated)' : 'transparent',
+                color: activeSubTab === 'registry' ? 'var(--color-live)' : 'var(--color-text-secondary)',
+                fontWeight: activeSubTab === 'registry' ? 700 : 400,
+                fontSize: 'var(--text-small)',
+                cursor: 'pointer',
+              }}
+            >
+              Plugin Registry ({catalog.length})
+            </button>
+          </div>
 
-      {/* Category Filter Tabs */}
-      <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
-        {categories.map((cat) => (
           <button
-            key={cat.id}
-            onClick={() => setSelectedCategory(cat.id)}
+            onClick={() => setShowImportModal(true)}
             style={{
               padding: 'var(--space-2) var(--space-3)',
               borderRadius: 'var(--radius-sm)',
+              border: '1px solid var(--color-border)',
+              backgroundColor: 'var(--color-surface-elevated)',
+              color: 'var(--color-text-primary)',
               fontSize: 'var(--text-small)',
-              fontWeight: selectedCategory === cat.id ? 700 : 500,
-              backgroundColor: selectedCategory === cat.id ? 'var(--color-surface-elevated)' : 'var(--color-surface)',
-              border: selectedCategory === cat.id ? '1px solid var(--color-live)' : '1px solid var(--color-border)',
-              color: selectedCategory === cat.id ? 'var(--color-text-primary)' : 'var(--color-text-secondary)',
+              cursor: 'pointer',
             }}
           >
-            {cat.label}
+            + Sideload Plugin
           </button>
-        ))}
-      </div>
+        </div>
+      </header>
 
-      {/* Plugins Grid */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: 'var(--space-4)' }}>
-        {filteredPlugins.map((plugin) => {
-          const isCrashed = plugin.status === 'CRASHED' || plugin.status === 'ERROR';
+      {/* Toast Notification */}
+      {toastMessage && (
+        <div
+          style={{
+            position: 'absolute',
+            top: 50,
+            right: 24,
+            padding: 'var(--space-2) var(--space-4)',
+            backgroundColor: 'var(--color-surface-elevated)',
+            border: '1px solid var(--color-live)',
+            borderRadius: 'var(--radius-sm)',
+            color: 'var(--color-text-primary)',
+            fontSize: 'var(--text-small)',
+            zIndex: 100,
+            boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
+          }}
+        >
+          {toastMessage}
+        </div>
+      )}
 
-          return (
-            <div
-              key={plugin.manifest.id}
+      {/* Search & Filter Strip */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: 'var(--space-3) var(--space-6)',
+          backgroundColor: 'var(--color-surface)',
+          borderBottom: '1px solid var(--color-border)',
+          gap: 'var(--space-4)',
+        }}
+      >
+        <div style={{ display: 'flex', gap: 'var(--space-1)', overflowX: 'auto' }}>
+          {categories.map((c) => (
+            <button
+              key={c.id}
+              onClick={() => setSelectedCategory(c.id)}
               style={{
-                backgroundColor: 'var(--color-surface)',
-                border: `1px solid ${isCrashed ? 'var(--color-error)' : 'var(--color-border)'}`,
-                borderRadius: 'var(--radius-md)',
-                padding: 'var(--space-4)',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 'var(--space-3)',
+                padding: 'var(--space-1) var(--space-3)',
+                borderRadius: 'var(--radius-sm)',
+                border: '1px solid var(--color-border)',
+                backgroundColor: selectedCategory === c.id ? 'var(--color-surface-elevated)' : 'transparent',
+                color: selectedCategory === c.id ? 'var(--color-live)' : 'var(--color-text-secondary)',
+                fontSize: 'var(--text-micro)',
+                fontWeight: selectedCategory === c.id ? 700 : 400,
+                cursor: 'pointer',
+                whiteSpace: 'nowrap',
               }}
             >
-              {/* Header */}
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                <div>
-                  <span
-                    style={{
-                      fontSize: 'var(--text-micro)',
-                      fontWeight: 700,
-                      color: 'var(--color-text-muted)',
-                      textTransform: 'uppercase',
-                    }}
-                  >
-                    {plugin.manifest.category.replace('_', ' ')}
-                  </span>
-                  <h2 style={{ fontSize: 'var(--text-body)', fontWeight: 600, margin: '2px 0 0 0' }}>
-                    {plugin.manifest.name}
-                  </h2>
-                  <span style={{ fontSize: 'var(--text-micro)', color: 'var(--color-text-muted)' }}>
-                    v{plugin.manifest.version} by {plugin.manifest.author}
-                  </span>
-                </div>
+              {c.label}
+            </button>
+          ))}
+        </div>
 
-                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <span
-                    style={{
-                      width: '8px',
-                      height: '8px',
-                      borderRadius: '50%',
-                      backgroundColor: getStatusColor(plugin.status),
-                    }}
-                  />
-                  <span
-                    className="font-mono"
-                    style={{
-                      fontSize: 'var(--text-micro)',
-                      fontWeight: 700,
-                      color: getStatusColor(plugin.status),
-                    }}
-                  >
-                    {plugin.status}
-                  </span>
-                </div>
+        <input
+          type="text"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          placeholder="Filter plugins by name, keywords, or author..."
+          style={{
+            minWidth: 280,
+            padding: 'var(--space-1) var(--space-3)',
+            backgroundColor: 'var(--color-bg)',
+            border: '1px solid var(--color-border)',
+            borderRadius: 'var(--radius-sm)',
+            color: 'var(--color-text-primary)',
+            fontSize: 'var(--text-small)',
+            outline: 'none',
+          }}
+        />
+      </div>
+
+      {/* Main Content Area */}
+      <div
+        style={{
+          flex: 1,
+          overflowY: 'auto',
+          padding: 'var(--space-6)',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 'var(--space-4)',
+        }}
+      >
+        {/* SUBTAB 1: INSTALLED PLUGINS */}
+        {activeSubTab === 'installed' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+            {filteredInstalled.length === 0 ? (
+              <div
+                style={{
+                  padding: 'var(--space-6)',
+                  textAlign: 'center',
+                  backgroundColor: 'var(--color-surface)',
+                  borderRadius: 'var(--radius-md)',
+                  color: 'var(--color-text-secondary)',
+                }}
+              >
+                No installed plugins match the filter. Browse the Plugin Registry tab to install new tools.
               </div>
-
-              {/* Description */}
-              <p style={{ fontSize: 'var(--text-small)', color: 'var(--color-text-secondary)', margin: 0, minHeight: '40px' }}>
-                {plugin.manifest.description}
-              </p>
-
-              {/* Error Callout if Crashed */}
-              {isCrashed && plugin.errorMessage && (
+            ) : (
+              filteredInstalled.map((p) => (
                 <div
+                  key={p.manifest.id}
                   style={{
-                    backgroundColor: 'rgba(255, 92, 108, 0.1)',
-                    border: '1px solid var(--color-error)',
-                    borderRadius: 'var(--radius-sm)',
-                    padding: 'var(--space-2)',
-                    fontSize: 'var(--text-micro)',
-                    color: 'var(--color-error)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    padding: 'var(--space-4)',
+                    backgroundColor: 'var(--color-surface)',
+                    border: '1px solid var(--color-border)',
+                    borderRadius: 'var(--radius-md)',
                   }}
                 >
-                  Isolated Error: {plugin.errorMessage}
-                </div>
-              )}
-
-              {/* Permissions & Memory Footer */}
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 'var(--text-micro)', color: 'var(--color-text-muted)' }}>
-                <span>Memory: ~{plugin.memoryEstimateKb} KB</span>
-                <div style={{ display: 'flex', gap: '4px' }}>
-                  {plugin.manifest.permissions.map((perm) => (
-                    <span
-                      key={perm}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-4)' }}>
+                    {/* Status Pill */}
+                    <div
                       style={{
-                        padding: '1px 4px',
-                        backgroundColor: 'var(--color-surface-elevated)',
-                        borderRadius: '2px',
-                        fontSize: '9px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 'var(--space-2)',
+                        minWidth: 100,
                       }}
                     >
-                      {perm}
-                    </span>
-                  ))}
+                      <span
+                        style={{
+                          width: 8,
+                          height: 8,
+                          borderRadius: '50%',
+                          backgroundColor: getStatusColor(p.status),
+                          boxShadow: p.status === 'RUNNING' ? '0 0 6px var(--color-live)' : 'none',
+                        }}
+                      />
+                      <span
+                        style={{
+                          fontSize: 'var(--text-micro)',
+                          fontWeight: 700,
+                          color: getStatusColor(p.status),
+                        }}
+                      >
+                        {p.status}
+                      </span>
+                    </div>
+
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+                        <span style={{ fontSize: 'var(--text-body)', fontWeight: 700 }}>{p.manifest.name}</span>
+                        <span style={{ fontSize: 'var(--text-micro)', color: 'var(--color-text-muted)' }}>
+                          v{p.manifest.version}
+                        </span>
+                        <span
+                          style={{
+                            padding: '1px 6px',
+                            borderRadius: 'var(--radius-sm)',
+                            fontSize: 'var(--text-micro)',
+                            backgroundColor: 'var(--color-surface-elevated)',
+                            color: 'var(--color-text-secondary)',
+                            border: '1px solid var(--color-border)',
+                          }}
+                        >
+                          {p.manifest.category}
+                        </span>
+                      </div>
+
+                      <div style={{ fontSize: 'var(--text-small)', color: 'var(--color-text-secondary)', marginTop: '2px' }}>
+                        {p.manifest.description}
+                      </div>
+
+                      {p.errorMessage && (
+                        <div style={{ fontSize: 'var(--text-micro)', color: 'var(--color-error)', marginTop: '4px' }}>
+                          Error: {p.errorMessage}
+                        </div>
+                      )}
+
+                      <div style={{ fontSize: 'var(--text-micro)', color: 'var(--color-text-muted)', marginTop: '4px' }}>
+                        Author: {p.manifest.author} | Memory: ~{p.memoryEstimateKb} KB | Permissions: {p.manifest.permissions.join(', ')}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Actions */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+                    {p.status === 'CRASHED' || p.status === 'ERROR' ? (
+                      <button
+                        onClick={() => handleRestartPlugin(p.manifest.id)}
+                        style={{
+                          padding: 'var(--space-1) var(--space-3)',
+                          borderRadius: 'var(--radius-sm)',
+                          border: 'none',
+                          backgroundColor: 'var(--color-live)',
+                          color: '#000',
+                          fontWeight: 600,
+                          fontSize: 'var(--text-small)',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        Restart
+                      </button>
+                    ) : (
+                      <>
+                        <button
+                          onClick={() => handleTogglePlugin(p.manifest.id, p.enabled)}
+                          style={{
+                            padding: 'var(--space-1) var(--space-3)',
+                            borderRadius: 'var(--radius-sm)',
+                            border: '1px solid var(--color-border)',
+                            backgroundColor: p.enabled ? 'var(--color-surface-elevated)' : 'transparent',
+                            color: p.enabled ? 'var(--color-live)' : 'var(--color-text-muted)',
+                            fontSize: 'var(--text-small)',
+                            fontWeight: 600,
+                            cursor: 'pointer',
+                          }}
+                        >
+                          {p.enabled ? 'Enabled' : 'Disabled'}
+                        </button>
+
+                        {p.enabled && (
+                          <button
+                            onClick={() => handleSimulateCrash(p.manifest.id)}
+                            style={{
+                              padding: 'var(--space-1) var(--space-2)',
+                              borderRadius: 'var(--radius-sm)',
+                              border: '1px solid var(--color-border)',
+                              backgroundColor: 'transparent',
+                              color: 'var(--color-warning)',
+                              fontSize: 'var(--text-micro)',
+                              cursor: 'pointer',
+                            }}
+                          >
+                            Test Crash
+                          </button>
+                        )}
+                      </>
+                    )}
+
+                    <button
+                      onClick={() => handleUninstall(p.manifest.id, p.manifest.name)}
+                      style={{
+                        padding: 'var(--space-1) var(--space-2)',
+                        borderRadius: 'var(--radius-sm)',
+                        border: '1px solid var(--color-border)',
+                        backgroundColor: 'transparent',
+                        color: 'var(--color-error)',
+                        fontSize: 'var(--text-small)',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      Uninstall
+                    </button>
+                  </div>
                 </div>
-              </div>
+              ))
+            )}
+          </div>
+        )}
 
-              {/* Action Buttons */}
-              <div style={{ display: 'flex', gap: 'var(--space-2)', marginTop: 'auto', paddingTop: 'var(--space-2)', borderTop: '1px solid var(--color-border)' }}>
-                {isCrashed ? (
-                  <button
-                    onClick={() => handleRestartPlugin(plugin.manifest.id)}
-                    style={{
-                      flex: 1,
-                      padding: 'var(--space-2) 0',
-                      backgroundColor: 'var(--color-live)',
-                      color: '#0B0D0F',
-                      fontWeight: 700,
-                      borderRadius: 'var(--radius-sm)',
-                      fontSize: 'var(--text-small)',
-                    }}
-                  >
-                    RECOVER & RESTART
-                  </button>
-                ) : (
-                  <button
-                    onClick={() => handleTogglePlugin(plugin.manifest.id, plugin.enabled)}
-                    style={{
-                      flex: 1,
-                      padding: 'var(--space-2) 0',
-                      backgroundColor: plugin.enabled ? 'var(--color-surface-elevated)' : 'var(--color-live)',
-                      color: plugin.enabled ? 'var(--color-text-primary)' : '#0B0D0F',
-                      fontWeight: 700,
-                      borderRadius: 'var(--radius-sm)',
-                      fontSize: 'var(--text-small)',
-                      border: '1px solid var(--color-border)',
-                    }}
-                  >
-                    {plugin.enabled ? 'DISABLE' : 'ENABLE'}
-                  </button>
-                )}
+        {/* SUBTAB 2: PLUGIN REGISTRY & STORE */}
+        {activeSubTab === 'registry' && (
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))',
+              gap: 'var(--space-4)',
+            }}
+          >
+            {filteredRegistry.map((item) => {
+              const installed = pluginHost.getPlugins().some((p) => p.manifest.id === item.manifest.id);
 
-                {plugin.status === 'RUNNING' && (
-                  <button
-                    onClick={() => handleSimulateCrash(plugin.manifest.id)}
-                    title="Simulate crash to verify failure isolation"
-                    style={{
-                      padding: 'var(--space-2) var(--space-3)',
-                      backgroundColor: 'var(--color-surface-elevated)',
-                      color: 'var(--color-error)',
-                      border: '1px solid var(--color-border)',
-                      borderRadius: 'var(--radius-sm)',
-                      fontSize: 'var(--text-micro)',
-                      fontWeight: 600,
-                    }}
-                  >
-                    Test Crash
-                  </button>
-                )}
-              </div>
-            </div>
-          );
-        })}
+              return (
+                <div
+                  key={item.manifest.id}
+                  style={{
+                    backgroundColor: 'var(--color-surface)',
+                    border: '1px solid var(--color-border)',
+                    borderRadius: 'var(--radius-md)',
+                    padding: 'var(--space-4)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    justifyContent: 'space-between',
+                  }}
+                >
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 'var(--space-1)' }}>
+                      <span
+                        style={{
+                          padding: '1px 6px',
+                          borderRadius: 'var(--radius-sm)',
+                          fontSize: 'var(--text-micro)',
+                          backgroundColor: 'var(--color-surface-elevated)',
+                          color: 'var(--color-info)',
+                          border: '1px solid var(--color-border)',
+                        }}
+                      >
+                        {item.manifest.category}
+                      </span>
+                      <span style={{ fontSize: 'var(--text-micro)', color: 'var(--color-text-muted)' }}>
+                        ★ {item.rating} ({item.downloadsCount} installs)
+                      </span>
+                    </div>
+
+                    <div style={{ fontSize: 'var(--text-body)', fontWeight: 700, marginBottom: '2px' }}>
+                      {item.manifest.name}
+                    </div>
+
+                    <div style={{ fontSize: 'var(--text-micro)', color: 'var(--color-text-secondary)', marginBottom: 'var(--space-2)' }}>
+                      by {item.author} | v{item.manifest.version}
+                    </div>
+
+                    <p style={{ fontSize: 'var(--text-small)', color: 'var(--color-text-secondary)', lineHeight: 1.5, margin: 0, marginBottom: 'var(--space-3)' }}>
+                      {item.manifest.description}
+                    </p>
+
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginBottom: 'var(--space-3)' }}>
+                      {item.tags.map((t) => (
+                        <span
+                          key={t}
+                          style={{
+                            padding: '1px 4px',
+                            borderRadius: 'var(--radius-sm)',
+                            fontSize: 'var(--text-micro)',
+                            backgroundColor: 'var(--color-bg)',
+                            color: 'var(--color-text-muted)',
+                          }}
+                        >
+                          #{t}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingTop: 'var(--space-2)', borderTop: '1px solid var(--color-border)' }}>
+                    <div style={{ fontSize: 'var(--text-micro)', color: 'var(--color-text-muted)' }}>
+                      Permissions: {item.manifest.permissions.join(', ')}
+                    </div>
+
+                    {installed ? (
+                      <button
+                        onClick={() => handleUninstall(item.manifest.id, item.manifest.name)}
+                        style={{
+                          padding: 'var(--space-1) var(--space-3)',
+                          borderRadius: 'var(--radius-sm)',
+                          border: '1px solid var(--color-border)',
+                          backgroundColor: 'var(--color-surface-elevated)',
+                          color: 'var(--color-error)',
+                          fontSize: 'var(--text-small)',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        Uninstall
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => handleInstallFromRegistry(item.manifest.id, item.manifest.name)}
+                        style={{
+                          padding: 'var(--space-1) var(--space-3)',
+                          borderRadius: 'var(--radius-sm)',
+                          border: 'none',
+                          backgroundColor: 'var(--color-live)',
+                          color: '#000',
+                          fontWeight: 600,
+                          fontSize: 'var(--text-small)',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        Install
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
+
+      {/* Sideload Plugin Modal */}
+      {showImportModal && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: 'rgba(0,0,0,0.75)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000,
+          }}
+        >
+          <div
+            style={{
+              width: 500,
+              backgroundColor: 'var(--color-surface)',
+              border: '1px solid var(--color-border)',
+              borderRadius: 'var(--radius-md)',
+              padding: 'var(--space-6)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 'var(--space-4)',
+            }}
+          >
+            <div>
+              <h3 style={{ margin: 0, fontSize: 'var(--text-h2)' }}>Sideload Custom Plugin Manifest</h3>
+              <p style={{ margin: 'var(--space-1) 0 0 0', fontSize: 'var(--text-small)', color: 'var(--color-text-secondary)' }}>
+                Paste the JSON manifest of your custom plugin to register and run it inside the failure-isolated host sandbox.
+              </p>
+            </div>
+
+            <form onSubmit={handleImportCustom} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+              <textarea
+                rows={8}
+                value={importJson}
+                onChange={(e) => setImportJson(e.target.value)}
+                placeholder='{ "id": "my-custom-plugin", "name": "My Plugin", "version": "1.0.0", "category": "Utility", "permissions": ["audio:read"], "author": "Studio Dev" }'
+                style={{
+                  width: '100%',
+                  padding: 'var(--space-2)',
+                  backgroundColor: 'var(--color-bg)',
+                  border: '1px solid var(--color-border)',
+                  borderRadius: 'var(--radius-sm)',
+                  color: 'var(--color-text-primary)',
+                  fontFamily: 'monospace',
+                  fontSize: 'var(--text-small)',
+                  boxSizing: 'border-box',
+                }}
+              />
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 'var(--space-2)' }}>
+                <button
+                  type="button"
+                  onClick={() => setShowImportModal(false)}
+                  style={{
+                    padding: 'var(--space-2) var(--space-4)',
+                    borderRadius: 'var(--radius-sm)',
+                    border: '1px solid var(--color-border)',
+                    backgroundColor: 'transparent',
+                    color: 'var(--color-text-primary)',
+                    cursor: 'pointer',
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  style={{
+                    padding: 'var(--space-2) var(--space-4)',
+                    borderRadius: 'var(--radius-sm)',
+                    border: 'none',
+                    backgroundColor: 'var(--color-live)',
+                    color: '#000',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                  }}
+                >
+                  Register & Enable
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

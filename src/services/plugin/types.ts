@@ -29,6 +29,7 @@ export interface PluginManifest {
   category: PluginCategory;
   permissions: PluginPermission[];
   homepage?: string;
+  entryPoint?: string;
 }
 
 export interface PluginInstance {

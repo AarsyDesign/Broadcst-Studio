@@ -1,4 +1,4 @@
-import type { PluginInstance } from './types';
+import type { PluginInstance, PluginManifest } from './types';
 import { logger } from '../logger';
 import { shoutcastService } from '../shoutcastService';
 import { audioEngine } from '../audioEngine';
@@ -227,6 +227,35 @@ class PluginHost {
     }, 45000); // every 45s
 
     this.intervals.set(plugin.manifest.id, interval);
+  }
+
+  public async registerPlugin(manifest: PluginManifest): Promise<PluginInstance> {
+    const existing = this.plugins.get(manifest.id);
+    if (existing) {
+      existing.manifest = manifest;
+      this.notify();
+      return existing;
+    }
+
+    const instance: PluginInstance = {
+      manifest,
+      status: 'STOPPED',
+      enabled: false,
+      memoryEstimateKb: 128,
+    };
+    this.plugins.set(manifest.id, instance);
+    this.notify();
+    logger.info('PluginHost', `Registered plugin: ${manifest.name} (${manifest.id})`);
+    return instance;
+  }
+
+  public async unregisterPlugin(id: string): Promise<boolean> {
+    if (!this.plugins.has(id)) return false;
+    await this.disablePlugin(id);
+    this.plugins.delete(id);
+    this.notify();
+    logger.info('PluginHost', `Unregistered plugin: ${id}`);
+    return true;
   }
 
   public subscribe(listener: (plugins: PluginInstance[]) => void): () => void {

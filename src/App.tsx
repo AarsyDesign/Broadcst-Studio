@@ -10,6 +10,7 @@ import { TranscriptWorkspace } from './components/TranscriptWorkspace';
 import { PluginsWorkspace } from './components/PluginsWorkspace';
 import { AutomationWorkspace } from './components/AutomationWorkspace';
 import { AIWorkspace } from './components/AIWorkspace';
+import { ScheduleWorkspace } from './components/ScheduleWorkspace';
 import { ipc } from './services/ipc';
 import { logger } from './services/logger';
 import { BroadcastStatus } from './types/broadcast';
@@ -166,6 +167,8 @@ export const App: React.FC = () => {
 
           {activeTab === 'transcript' && <TranscriptWorkspace />}
 
+          {activeTab === 'schedule' && <ScheduleWorkspace />}
+
           {activeTab === 'recordings' && <RecordingsWorkspace />}
 
           {activeTab === 'plugins' && <PluginsWorkspace />}
@@ -179,6 +182,7 @@ export const App: React.FC = () => {
           {activeTab !== 'on_air' &&
             activeTab !== 'mixer' &&
             activeTab !== 'sources' &&
+            activeTab !== 'schedule' &&
             activeTab !== 'transcript' &&
             activeTab !== 'recordings' &&
             activeTab !== 'plugins' &&

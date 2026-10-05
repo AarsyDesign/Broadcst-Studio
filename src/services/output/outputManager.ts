@@ -1,6 +1,7 @@
 import { BroadcastOutputTarget } from './types';
 import { logger } from '../logger';
 import { shoutcastService } from '../shoutcastService';
+import { icecastService } from '../icecast/icecastService';
 
 class OutputManager {
   private targets: BroadcastOutputTarget[] = [
@@ -21,11 +22,25 @@ class OutputManager {
       id: 'target-icecast-backup',
       name: 'Secondary Icecast Standby',
       type: 'icecast',
-      server: 'backup.example.org',
+      server: 'icecast.example.org',
       port: 8000,
-      mountPoint: '/live.mp3',
+      mountPoint: '/live',
       bitrate: 128,
       codec: 'MP3',
+      enabled: false,
+      status: 'OFFLINE',
+      bytesSent: 0,
+      uptimeSeconds: 0,
+    },
+    {
+      id: 'target-opus-mobile',
+      name: 'Mobile High-Efficiency Feed',
+      type: 'icecast',
+      server: 'mobile.example.org',
+      port: 8000,
+      mountPoint: '/mobile.opus',
+      bitrate: 64,
+      codec: 'OPUS',
       enabled: false,
       status: 'OFFLINE',
       bytesSent: 0,
@@ -52,6 +67,16 @@ class OutputManager {
         this.notify();
       }
     });
+
+    icecastService.subscribe((status) => {
+      const icecastTarget = this.targets.find((t) => t.id === 'target-icecast-backup');
+      if (icecastTarget) {
+        icecastTarget.status = status.state === 'CONNECTED' ? 'CONNECTED' : status.state === 'CONNECTING' ? 'CONNECTING' : 'OFFLINE';
+        icecastTarget.uptimeSeconds = status.uptimeSeconds;
+        icecastTarget.bytesSent = status.bytesSent;
+        this.notify();
+      }
+    });
   }
 
   public getTargets(): BroadcastOutputTarget[] {
@@ -68,6 +93,36 @@ class OutputManager {
     return target.enabled;
   }
 
+  public async connectTarget(id: string): Promise<boolean> {
+    const target = this.targets.find((t) => t.id === id);
+    if (!target) return false;
+
+    if (target.type === 'shoutcast_v1' || target.type === 'shoutcast_v2') {
+      await shoutcastService.connect();
+      return true;
+    } else if (target.type === 'icecast') {
+      return await icecastService.connect({
+        server: target.server,
+        port: target.port,
+        mountPoint: target.mountPoint || '/live',
+        bitrate: target.bitrate,
+        codec: (target.codec as any) || 'MP3',
+      });
+    }
+    return false;
+  }
+
+  public async disconnectTarget(id: string): Promise<void> {
+    const target = this.targets.find((t) => t.id === id);
+    if (!target) return;
+
+    if (target.type === 'shoutcast_v1' || target.type === 'shoutcast_v2') {
+      await shoutcastService.disconnect();
+    } else if (target.type === 'icecast') {
+      await icecastService.disconnect();
+    }
+  }
+
   public addTarget(target: Omit<BroadcastOutputTarget, 'id' | 'bytesSent' | 'uptimeSeconds' | 'status'>): BroadcastOutputTarget {
     const newTarget: BroadcastOutputTarget = {
       ...target,
@@ -79,6 +134,16 @@ class OutputManager {
     this.targets.push(newTarget);
     this.notify();
     return newTarget;
+  }
+
+  public removeTarget(id: string): boolean {
+    const initialLen = this.targets.length;
+    this.targets = this.targets.filter((t) => t.id !== id);
+    if (this.targets.length !== initialLen) {
+      this.notify();
+      return true;
+    }
+    return false;
   }
 
   public subscribe(callback: (targets: BroadcastOutputTarget[]) => void): () => void {
