@@ -2,6 +2,10 @@ import React, { useEffect, useState } from 'react';
 import { TopStatusBar } from './components/TopStatusBar';
 import { NavigationRail, WorkspaceTab } from './components/NavigationRail';
 import { OnAirWorkspace } from './components/OnAirWorkspace';
+import { MixerWorkspace } from './components/MixerWorkspace';
+import { SourcesWorkspace } from './components/SourcesWorkspace';
+import { RecordingsWorkspace } from './components/RecordingsWorkspace';
+import { SettingsWorkspace } from './components/SettingsWorkspace';
 import { ipc } from './services/ipc';
 import { logger } from './services/logger';
 import { BroadcastStatus } from './types/broadcast';
@@ -152,34 +156,46 @@ export const App: React.FC = () => {
             />
           )}
 
-          {activeTab !== 'on_air' && (
-            <div
-              style={{
-                flex: 1,
-                padding: 'var(--space-6)',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 'var(--space-4)',
-                backgroundColor: 'var(--color-bg)',
-              }}
-            >
-              <h2 style={{ fontSize: 'var(--text-h2)', textTransform: 'uppercase' }}>
-                {activeTab.replace('_', ' ')}
-              </h2>
+          {activeTab === 'mixer' && <MixerWorkspace />}
+
+          {activeTab === 'sources' && <SourcesWorkspace />}
+
+          {activeTab === 'recordings' && <RecordingsWorkspace />}
+
+          {activeTab === 'settings' && <SettingsWorkspace />}
+
+          {activeTab !== 'on_air' &&
+            activeTab !== 'mixer' &&
+            activeTab !== 'sources' &&
+            activeTab !== 'recordings' &&
+            activeTab !== 'settings' && (
               <div
                 style={{
-                  padding: 'var(--space-4)',
-                  backgroundColor: 'var(--color-surface)',
-                  border: '1px solid var(--color-border)',
-                  borderRadius: 'var(--radius-md)',
-                  color: 'var(--color-text-secondary)',
-                  fontSize: 'var(--text-small)',
+                  flex: 1,
+                  padding: 'var(--space-6)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 'var(--space-4)',
+                  backgroundColor: 'var(--color-bg)',
                 }}
               >
-                Module ready for Phase 1 integration. Real-time audio routing and state machine contracts are active.
+                <h2 style={{ fontSize: 'var(--text-h2)', textTransform: 'uppercase' }}>
+                  {activeTab.replace('_', ' ')}
+                </h2>
+                <div
+                  style={{
+                    padding: 'var(--space-4)',
+                    backgroundColor: 'var(--color-surface)',
+                    border: '1px solid var(--color-border)',
+                    borderRadius: 'var(--radius-md)',
+                    color: 'var(--color-text-secondary)',
+                    fontSize: 'var(--text-small)',
+                  }}
+                >
+                  Workspace scheduled for subsequent phases. Core audio and broadcast pipelines are actively operational.
+                </div>
               </div>
-            </div>
-          )}
+            )}
         </main>
       </div>
     </div>

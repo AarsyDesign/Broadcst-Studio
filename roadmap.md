@@ -12,16 +12,16 @@
 
 ## Phase 1 — Broadcast Core
 
-- [ ] enumerate audio devices
-- [ ] microphone capture
-- [ ] internal audio buffer
-- [ ] mixer
-- [ ] level meters
-- [ ] MP3 encoder
-- [ ] SHOUTcast output
-- [ ] metadata
-- [ ] reconnect
-- [ ] recording
+- [x] enumerate audio devices
+- [x] microphone capture
+- [x] internal audio buffer
+- [x] mixer
+- [x] level meters
+- [x] MP3 encoder
+- [x] SHOUTcast output
+- [x] metadata
+- [x] reconnect
+- [x] recording
 
 ## Phase 2 — Transcript
 
