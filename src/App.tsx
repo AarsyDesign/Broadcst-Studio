@@ -6,6 +6,7 @@ import { MixerWorkspace } from './components/MixerWorkspace';
 import { SourcesWorkspace } from './components/SourcesWorkspace';
 import { RecordingsWorkspace } from './components/RecordingsWorkspace';
 import { SettingsWorkspace } from './components/SettingsWorkspace';
+import { TranscriptWorkspace } from './components/TranscriptWorkspace';
 import { ipc } from './services/ipc';
 import { logger } from './services/logger';
 import { BroadcastStatus } from './types/broadcast';
@@ -160,6 +161,8 @@ export const App: React.FC = () => {
 
           {activeTab === 'sources' && <SourcesWorkspace />}
 
+          {activeTab === 'transcript' && <TranscriptWorkspace />}
+
           {activeTab === 'recordings' && <RecordingsWorkspace />}
 
           {activeTab === 'settings' && <SettingsWorkspace />}
@@ -167,6 +170,7 @@ export const App: React.FC = () => {
           {activeTab !== 'on_air' &&
             activeTab !== 'mixer' &&
             activeTab !== 'sources' &&
+            activeTab !== 'transcript' &&
             activeTab !== 'recordings' &&
             activeTab !== 'settings' && (
               <div

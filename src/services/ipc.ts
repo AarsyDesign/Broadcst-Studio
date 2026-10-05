@@ -1,29 +1,18 @@
 import type { CommandMap, CommandName, EventMap, EventName } from '../types/ipc';
 import type { AudioMetrics, TelemetrySnapshot } from '../types/telemetry';
-import type { TranscriptStatus } from '../types/transcript';
 import { logger } from './logger';
 import { audioEngine } from './audioEngine';
 import { shoutcastService } from './shoutcastService';
 import { deviceManager } from './deviceManager';
 import { recorderService } from './recorderService';
+import { transcriptionService } from './transcription/transcriptionService';
+import { transcriptStore } from './transcription/transcriptStore';
 
 type EventHandler<T> = (payload: T) => void;
 
 class IPCService {
   private isTauriAvailable = false;
   private eventListeners: Map<string, Set<EventHandler<any>>> = new Map();
-
-  private transcriptStatus: TranscriptStatus = {
-    state: 'IDLE',
-    segmentsCount: 0,
-    config: {
-      provider: 'local_whisper',
-      modelName: 'whisper-small-q5',
-      language: 'id',
-      isLocal: true,
-      autoScroll: true,
-    },
-  };
 
   constructor() {
     this.checkTauriAvailability();
@@ -60,6 +49,11 @@ class IPCService {
     // Forward device changes to IPC event system
     deviceManager.onDevicesChanged((devices) => {
       this.emit('audio.device.changed', devices);
+    });
+
+    // Forward transcription events to IPC
+    transcriptionService.onSegmentCreated((segment) => {
+      this.emit('transcript.segment.created', segment);
     });
   }
 
@@ -197,42 +191,15 @@ class IPCService {
       }
 
       case 'transcript.start': {
-        this.transcriptStatus = {
-          ...this.transcriptStatus,
-          state: 'LISTENING',
-        };
-        return this.transcriptStatus;
+        return await transcriptionService.start();
       }
 
       case 'transcript.stop': {
-        this.transcriptStatus = {
-          ...this.transcriptStatus,
-          state: 'IDLE',
-        };
-        return this.transcriptStatus;
+        return await transcriptionService.stop();
       }
 
       case 'transcript.get_segments': {
-        return [
-          {
-            id: 'seg-1',
-            startMs: 0,
-            endMs: 4200,
-            text: 'Assalamu alaikum warahmatullahi wabarakatuh.',
-            confidence: 0.98,
-            language: 'id',
-            finalized: true,
-          },
-          {
-            id: 'seg-2',
-            startMs: 4300,
-            endMs: 9100,
-            text: 'Selamat bergabung kembali di sesi siaran kita hari ini.',
-            confidence: 0.95,
-            language: 'id',
-            finalized: true,
-          },
-        ];
+        return transcriptStore.getSegments();
       }
 
       case 'recording.start': {

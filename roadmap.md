@@ -25,13 +25,13 @@
 
 ## Phase 2 — Transcript
 
-- [ ] transcription abstraction
-- [ ] local provider
-- [ ] live chunks
-- [ ] interim/final segments
-- [ ] transcript UI
-- [ ] transcript persistence
-- [ ] recording ↔ transcript timeline
+- [x] transcription abstraction
+- [x] local provider
+- [x] live chunks
+- [x] interim/final segments
+- [x] transcript UI
+- [x] transcript persistence
+- [x] recording ↔ transcript timeline
 
 ## Phase 3 — Ecosystem
 

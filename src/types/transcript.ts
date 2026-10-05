@@ -7,7 +7,7 @@ export type TranscriptState =
   | 'ERROR'
   | 'COMPLETED';
 
-export type TranscriptProviderType = 'local_whisper' | 'cloud_openai' | 'custom_adapter';
+export type TranscriptProviderType = 'local_whisper' | 'web_speech' | 'cloud_openai' | 'custom_adapter';
 
 export interface TranscriptConfig {
   provider: TranscriptProviderType;
