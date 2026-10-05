@@ -184,7 +184,7 @@ export const TranscriptWorkspace: React.FC = () => {
               fontWeight: 700,
               fontSize: 'var(--text-small)',
               backgroundColor: status.state === 'LISTENING' ? 'var(--color-live)' : 'var(--color-surface-elevated)',
-              color: status.state === 'LISTENING' ? '#0B0D0F' : 'var(--color-text-primary)',
+              color: status.state === 'LISTENING' ? 'var(--color-live-text)' : 'var(--color-text-primary)',
               border: '1px solid var(--color-border)',
             }}
           >
@@ -530,7 +530,7 @@ export const TranscriptWorkspace: React.FC = () => {
               bottom: 'var(--space-4)',
               right: 'var(--space-6)',
               backgroundColor: 'var(--color-live)',
-              color: '#0B0D0F',
+              color: 'var(--color-live-text)',
               padding: 'var(--space-2) var(--space-4)',
               borderRadius: 'var(--radius-sm)',
               fontWeight: 700,

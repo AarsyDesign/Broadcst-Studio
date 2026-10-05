@@ -93,7 +93,7 @@ export const AutomationWorkspace: React.FC = () => {
           style={{
             padding: 'var(--space-2) var(--space-4)',
             backgroundColor: 'var(--color-live)',
-            color: '#0B0D0F',
+            color: 'var(--color-live-text)',
             borderRadius: 'var(--radius-sm)',
             fontWeight: 700,
             fontSize: 'var(--text-small)',
@@ -179,7 +179,7 @@ export const AutomationWorkspace: React.FC = () => {
                 marginTop: 'var(--space-2)',
                 padding: 'var(--space-2) var(--space-4)',
                 backgroundColor: 'var(--color-live)',
-                color: '#0B0D0F',
+                color: 'var(--color-live-text)',
                 fontWeight: 700,
                 borderRadius: 'var(--radius-sm)',
               }}
@@ -278,7 +278,7 @@ export const AutomationWorkspace: React.FC = () => {
                   style={{
                     padding: 'var(--space-2) var(--space-4)',
                     backgroundColor: rule.enabled ? 'var(--color-live)' : 'var(--color-surface-elevated)',
-                    color: rule.enabled ? '#0B0D0F' : 'var(--color-text-primary)',
+                    color: rule.enabled ? 'var(--color-live-text)' : 'var(--color-text-primary)',
                     borderRadius: 'var(--radius-sm)',
                     fontSize: 'var(--text-small)',
                     fontWeight: 700,

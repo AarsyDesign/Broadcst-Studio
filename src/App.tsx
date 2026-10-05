@@ -20,6 +20,19 @@ import { TranscriptSegment, TranscriptStatus } from './types/transcript';
 export const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<WorkspaceTab>('on_air');
   const [isNative, setIsNative] = useState<boolean>(false);
+  const [theme, setTheme] = useState<'dark' | 'light'>(() => {
+    const saved = localStorage.getItem('broadcast_theme');
+    return saved === 'light' ? 'light' : 'dark';
+  });
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('broadcast_theme', theme);
+  }, [theme]);
+
+  const handleToggleTheme = () => {
+    setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
+  };
 
   const [status, setStatus] = useState<BroadcastStatus>({
     state: 'OFFLINE',
@@ -132,6 +145,7 @@ export const App: React.FC = () => {
 
   return (
     <div
+      data-theme={theme}
       style={{
         display: 'flex',
         flexDirection: 'column',
@@ -141,7 +155,12 @@ export const App: React.FC = () => {
         backgroundColor: 'var(--color-bg)',
       }}
     >
-      <TopStatusBar status={status} isNative={isNative} />
+      <TopStatusBar
+        status={status}
+        isNative={isNative}
+        theme={theme}
+        onToggleTheme={handleToggleTheme}
+      />
 
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
         <NavigationRail activeTab={activeTab} onSelectTab={setActiveTab} />
@@ -177,7 +196,9 @@ export const App: React.FC = () => {
 
           {activeTab === 'ai' && <AIWorkspace />}
 
-          {activeTab === 'settings' && <SettingsWorkspace />}
+          {activeTab === 'settings' && (
+            <SettingsWorkspace theme={theme} onSetTheme={setTheme} />
+          )}
 
           {activeTab !== 'on_air' &&
             activeTab !== 'mixer' &&

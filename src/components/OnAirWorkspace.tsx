@@ -111,7 +111,7 @@ export const OnAirWorkspace: React.FC<OnAirWorkspaceProps> = ({
                 padding: 'var(--space-3) var(--space-6)',
                 borderRadius: 'var(--radius-sm)',
                 backgroundColor: 'var(--color-live)',
-                color: '#0B0D0F',
+                color: 'var(--color-live-text)',
                 fontWeight: 700,
                 letterSpacing: '0.04em',
                 boxShadow: '0 0 12px var(--color-live-glow)',

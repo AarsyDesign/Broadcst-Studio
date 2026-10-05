@@ -4,9 +4,16 @@ import { BroadcastStatus } from '../types/broadcast';
 interface TopStatusBarProps {
   status: BroadcastStatus;
   isNative: boolean;
+  theme: 'dark' | 'light';
+  onToggleTheme: () => void;
 }
 
-export const TopStatusBar: React.FC<TopStatusBarProps> = ({ status, isNative }) => {
+export const TopStatusBar: React.FC<TopStatusBarProps> = ({
+  status,
+  isNative,
+  theme,
+  onToggleTheme,
+}) => {
   const formatUptime = (seconds: number): string => {
     const hrs = Math.floor(seconds / 3600);
     const mins = Math.floor((seconds % 3600) / 60);
@@ -94,7 +101,7 @@ export const TopStatusBar: React.FC<TopStatusBarProps> = ({ status, isNative }) 
       </div>
 
       {/* Right: Metrics & System Info */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-6)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-4)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', color: 'var(--color-text-secondary)' }}>
           <span>Bitrate:</span>
           <span className="font-mono" style={{ color: 'var(--color-text-primary)', fontWeight: 600 }}>
@@ -121,13 +128,40 @@ export const TopStatusBar: React.FC<TopStatusBarProps> = ({ status, isNative }) 
             fontSize: 'var(--text-micro)',
             padding: '2px 6px',
             borderRadius: 'var(--radius-sm)',
-            backgroundColor: isNative ? 'rgba(217, 255, 85, 0.1)' : 'rgba(103, 183, 255, 0.1)',
+            backgroundColor: 'var(--color-surface-elevated)',
             color: isNative ? 'var(--color-live)' : 'var(--color-info)',
-            border: `1px solid ${isNative ? 'rgba(217, 255, 85, 0.2)' : 'rgba(103, 183, 255, 0.2)'}`,
+            border: '1px solid var(--color-border)',
+            fontWeight: 600,
           }}
         >
           {isNative ? 'Native IPC' : 'Dev Mock IPC'}
         </div>
+
+        {/* Theme Toggle Button */}
+        <button
+          onClick={onToggleTheme}
+          aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
+          title={`Active theme: ${theme.toUpperCase()}. Click to switch to ${theme === 'dark' ? 'Light' : 'Dark'} Mode`}
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 'var(--space-1)',
+            padding: '3px 8px',
+            borderRadius: 'var(--radius-sm)',
+            backgroundColor: 'var(--color-surface-elevated)',
+            border: '1px solid var(--color-border)',
+            color: 'var(--color-text-primary)',
+            fontSize: 'var(--text-micro)',
+            fontWeight: 600,
+            cursor: 'pointer',
+            transition: 'background-color var(--motion-state), color var(--motion-state)',
+          }}
+        >
+          <span style={{ color: 'var(--color-text-muted)' }}>THEME:</span>
+          <span style={{ color: 'var(--color-live)', fontWeight: 700 }}>
+            {theme === 'dark' ? 'DARK' : 'LIGHT'}
+          </span>
+        </button>
       </div>
     </header>
   );

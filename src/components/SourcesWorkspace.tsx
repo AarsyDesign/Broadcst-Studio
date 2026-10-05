@@ -138,7 +138,7 @@ export const SourcesWorkspace: React.FC = () => {
               fontWeight: 700,
               fontSize: 'var(--text-small)',
               backgroundColor: isCapturing ? 'var(--color-live)' : 'var(--color-surface-elevated)',
-              color: isCapturing ? '#0B0D0F' : 'var(--color-text-primary)',
+              color: isCapturing ? 'var(--color-live-text)' : 'var(--color-text-primary)',
               border: '1px solid var(--color-border)',
             }}
           >
@@ -200,7 +200,7 @@ export const SourcesWorkspace: React.FC = () => {
                       style={{
                         fontSize: 'var(--text-micro)',
                         backgroundColor: 'var(--color-live)',
-                        color: '#0B0D0F',
+                        color: 'var(--color-live-text)',
                         padding: '1px 6px',
                         borderRadius: 'var(--radius-sm)',
                         fontWeight: 700,

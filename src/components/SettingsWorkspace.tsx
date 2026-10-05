@@ -6,7 +6,15 @@ import { StationProfile } from '../services/profile/types';
 import { AudioCodecType, CODEC_PROFILES } from '../types/codecs';
 import { ShoutcastConfig, TrackMetadata } from '../types/broadcast';
 
-export const SettingsWorkspace: React.FC = () => {
+interface SettingsWorkspaceProps {
+  theme?: 'dark' | 'light';
+  onSetTheme?: (theme: 'dark' | 'light') => void;
+}
+
+export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
+  theme = 'dark',
+  onSetTheme,
+}) => {
   const [profiles, setProfiles] = useState<StationProfile[]>(stationProfileManager.getProfiles());
   const [activeProfile, setActiveProfile] = useState<StationProfile>(stationProfileManager.getActiveProfile());
 
@@ -291,7 +299,7 @@ export const SettingsWorkspace: React.FC = () => {
               borderRadius: 'var(--radius-sm)',
               border: 'none',
               backgroundColor: 'var(--color-live)',
-              color: '#000',
+              color: 'var(--color-live-text)',
               fontWeight: 600,
               fontSize: 'var(--text-small)',
               cursor: 'pointer',
@@ -547,7 +555,7 @@ export const SettingsWorkspace: React.FC = () => {
                 marginTop: 'var(--space-2)',
                 padding: 'var(--space-2) var(--space-4)',
                 backgroundColor: 'var(--color-live)',
-                color: '#000',
+                color: 'var(--color-live-text)',
                 border: 'none',
                 borderRadius: 'var(--radius-sm)',
                 fontWeight: 600,
@@ -720,6 +728,89 @@ export const SettingsWorkspace: React.FC = () => {
         </div>
       </div>
 
+      {/* Console Display & Theme Preferences */}
+      <section
+        style={{
+          backgroundColor: 'var(--color-surface)',
+          border: '1px solid var(--color-border)',
+          borderRadius: 'var(--radius-md)',
+          padding: 'var(--space-4)',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 'var(--space-3)',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div>
+            <h2 style={{ fontSize: 'var(--text-body)', fontWeight: 700, margin: 0, textTransform: 'uppercase' }}>
+              Console Display and Theme
+            </h2>
+            <p style={{ margin: 'var(--space-1) 0 0', fontSize: 'var(--text-small)', color: 'var(--color-text-secondary)' }}>
+              Switch between Studio Dark console for low-light broadcast environments and Studio Light mode for daytime studio operations.
+            </p>
+          </div>
+
+          <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
+            <button
+              type="button"
+              onClick={() => onSetTheme?.('dark')}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 'var(--space-2)',
+                padding: 'var(--space-2) var(--space-4)',
+                borderRadius: 'var(--radius-sm)',
+                border: `1px solid ${theme === 'dark' ? 'var(--color-live)' : 'var(--color-border)'}`,
+                backgroundColor: theme === 'dark' ? 'var(--color-surface-elevated)' : 'transparent',
+                color: theme === 'dark' ? 'var(--color-live)' : 'var(--color-text-secondary)',
+                fontWeight: 600,
+                fontSize: 'var(--text-small)',
+                cursor: 'pointer',
+                transition: 'all var(--motion-state)',
+              }}
+            >
+              <span
+                style={{
+                  width: '8px',
+                  height: '8px',
+                  borderRadius: '50%',
+                  backgroundColor: theme === 'dark' ? 'var(--color-live)' : 'var(--color-text-muted)',
+                }}
+              />
+              Dark Console
+            </button>
+            <button
+              type="button"
+              onClick={() => onSetTheme?.('light')}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 'var(--space-2)',
+                padding: 'var(--space-2) var(--space-4)',
+                borderRadius: 'var(--radius-sm)',
+                border: `1px solid ${theme === 'light' ? 'var(--color-live)' : 'var(--color-border)'}`,
+                backgroundColor: theme === 'light' ? 'var(--color-surface-elevated)' : 'transparent',
+                color: theme === 'light' ? 'var(--color-live)' : 'var(--color-text-secondary)',
+                fontWeight: 600,
+                fontSize: 'var(--text-small)',
+                cursor: 'pointer',
+                transition: 'all var(--motion-state)',
+              }}
+            >
+              <span
+                style={{
+                  width: '8px',
+                  height: '8px',
+                  borderRadius: '50%',
+                  backgroundColor: theme === 'light' ? 'var(--color-live)' : 'var(--color-text-muted)',
+                }}
+              />
+              Light Broadcast
+            </button>
+          </div>
+        </div>
+      </section>
+
       {/* Create New Station Modal */}
       {showCreateModal && (
         <div
@@ -809,7 +900,7 @@ export const SettingsWorkspace: React.FC = () => {
                     borderRadius: 'var(--radius-sm)',
                     border: 'none',
                     backgroundColor: 'var(--color-live)',
-                    color: '#000',
+                    color: 'var(--color-live-text)',
                     fontWeight: 600,
                     cursor: 'pointer',
                   }}

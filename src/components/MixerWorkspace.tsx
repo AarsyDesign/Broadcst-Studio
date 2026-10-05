@@ -263,7 +263,7 @@ export const MixerWorkspace: React.FC = () => {
                     fontSize: 'var(--text-micro)',
                     fontWeight: 700,
                     backgroundColor: channel.solo ? 'var(--color-warning)' : 'var(--color-surface-elevated)',
-                    color: channel.solo ? '#0B0D0F' : 'var(--color-text-secondary)',
+                    color: channel.solo ? 'var(--color-warning-text)' : 'var(--color-text-secondary)',
                     border: `1px solid ${channel.solo ? 'var(--color-warning)' : 'var(--color-border)'}`,
                   }}
                 >

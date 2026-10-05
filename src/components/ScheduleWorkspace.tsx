@@ -227,7 +227,7 @@ export const ScheduleWorkspace: React.FC = () => {
               borderRadius: 'var(--radius-sm)',
               border: 'none',
               backgroundColor: 'var(--color-live)',
-              color: '#000',
+              color: 'var(--color-live-text)',
               fontWeight: 600,
               fontSize: 'var(--text-small)',
               cursor: 'pointer',
@@ -908,7 +908,7 @@ export const ScheduleWorkspace: React.FC = () => {
                         borderRadius: 'var(--radius-sm)',
                         border: '1px solid var(--color-border)',
                         backgroundColor: formDays.includes(idx) ? 'var(--color-live)' : 'var(--color-bg)',
-                        color: formDays.includes(idx) ? '#000' : 'var(--color-text-secondary)',
+                        color: formDays.includes(idx) ? 'var(--color-live-text)' : 'var(--color-text-secondary)',
                         fontWeight: formDays.includes(idx) ? 700 : 400,
                         cursor: 'pointer',
                       }}
@@ -961,7 +961,7 @@ export const ScheduleWorkspace: React.FC = () => {
                     borderRadius: 'var(--radius-sm)',
                     border: 'none',
                     backgroundColor: 'var(--color-live)',
-                    color: '#000',
+                    color: 'var(--color-live-text)',
                     fontWeight: 600,
                     cursor: 'pointer',
                   }}
