@@ -35,11 +35,11 @@
 
 ## Phase 3 — Ecosystem
 
-- [ ] plugin API
-- [ ] plugin process isolation
-- [ ] automation API
-- [ ] output abstraction
-- [ ] SDK documentation
+- [x] plugin API
+- [x] plugin process isolation
+- [x] automation API
+- [x] output abstraction
+- [x] SDK documentation
 
 ## Phase 4 — AI / MCP
 

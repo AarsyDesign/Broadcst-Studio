@@ -7,6 +7,8 @@ import { SourcesWorkspace } from './components/SourcesWorkspace';
 import { RecordingsWorkspace } from './components/RecordingsWorkspace';
 import { SettingsWorkspace } from './components/SettingsWorkspace';
 import { TranscriptWorkspace } from './components/TranscriptWorkspace';
+import { PluginsWorkspace } from './components/PluginsWorkspace';
+import { AutomationWorkspace } from './components/AutomationWorkspace';
 import { ipc } from './services/ipc';
 import { logger } from './services/logger';
 import { BroadcastStatus } from './types/broadcast';
@@ -165,6 +167,10 @@ export const App: React.FC = () => {
 
           {activeTab === 'recordings' && <RecordingsWorkspace />}
 
+          {activeTab === 'plugins' && <PluginsWorkspace />}
+
+          {activeTab === 'automation' && <AutomationWorkspace />}
+
           {activeTab === 'settings' && <SettingsWorkspace />}
 
           {activeTab !== 'on_air' &&
@@ -172,6 +178,8 @@ export const App: React.FC = () => {
             activeTab !== 'sources' &&
             activeTab !== 'transcript' &&
             activeTab !== 'recordings' &&
+            activeTab !== 'plugins' &&
+            activeTab !== 'automation' &&
             activeTab !== 'settings' && (
               <div
                 style={{
