@@ -2,13 +2,13 @@
 
 ## Phase 0 — Foundation
 
-- [ ] Repository
-- [ ] Tauri + React shell
-- [ ] Rust workspace
-- [ ] Design tokens
-- [ ] IPC contract
-- [ ] logging
-- [ ] telemetry model
+- [x] Repository
+- [x] Tauri + React shell
+- [x] Rust workspace
+- [x] Design tokens
+- [x] IPC contract
+- [x] logging
+- [x] telemetry model
 
 ## Phase 1 — Broadcast Core
 
