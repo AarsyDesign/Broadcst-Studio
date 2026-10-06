@@ -24,6 +24,7 @@ crossbeam-channel = "0.5"
 byteorder = "1.5"
 rtrb = "0.4"
 rusty_mp3 = "1.0"
+symphonia = { version = "0.5.4", features = ["mp3", "wav", "flac", "ogg", "vorbis"] }
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

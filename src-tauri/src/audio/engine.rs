@@ -1,7 +1,9 @@
 use crate::audio::buffer::{create_audio_ring_buffer, AudioConsumer};
 use crate::audio::capture::{AudioCaptureManager, AudioCaptureStream};
 use crate::audio::mixer::{sum_channel_buffers, ChannelStrip, ChannelStripSnapshot, MasterBus};
+use crate::audio::monitor::AudioMonitorManager;
 use crate::models::AudioMetrics;
+use crate::playback::{DeckRenderStatus, PlaybackManager};
 use crossbeam_channel::{bounded, Receiver, Sender, TrySendError};
 use parking_lot::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -24,6 +26,8 @@ pub struct MasterTapSubscription {
 pub struct AudioEngine {
     sample_rate: u32,
     mic_channel: Arc<ChannelStrip>,
+    deck_a_channel: Arc<ChannelStrip>,
+    deck_b_channel: Arc<ChannelStrip>,
     music_channel: Arc<ChannelStrip>,
     aux_channel: Arc<ChannelStrip>,
     sfx_channel: Arc<ChannelStrip>,
@@ -43,22 +47,33 @@ pub struct AudioEngine {
     capture_stream: Arc<Mutex<Option<AudioCaptureStream>>>,
     consumer_slot: Arc<Mutex<Option<AudioConsumer>>>,
 
+    // Output monitor manager
+    pub monitor_manager: Arc<AudioMonitorManager>,
+
+    // Playback manager for Deck A / Deck B
+    pub playback_manager: Arc<PlaybackManager>,
+
     // Engine thread control
     is_running: Arc<AtomicBool>,
     worker_handle: Arc<Mutex<Option<JoinHandle<()>>>>,
 }
 
 impl AudioEngine {
-    pub fn new(sample_rate: u32) -> Arc<Self> {
+    pub fn new(sample_rate: u32, playback_manager: Arc<PlaybackManager>) -> Arc<Self> {
         let mic = ChannelStrip::new("mic", "Microphone", true);
-        let music = ChannelStrip::new("music", "Music / Deck", false);
+        let deck_a = ChannelStrip::new("deck_a", "Deck A", false);
+        let deck_b = ChannelStrip::new("deck_b", "Deck B", false);
+        let music = ChannelStrip::new("music", "Music Master", false);
         let aux = ChannelStrip::new("aux", "Aux / Soundboard", false);
         let sfx = ChannelStrip::new("sfx", "Studio FX", false);
         let master = Arc::new(MasterBus::new());
+        let monitor = AudioMonitorManager::new();
 
         let engine = Arc::new(Self {
             sample_rate,
             mic_channel: mic,
+            deck_a_channel: deck_a,
+            deck_b_channel: deck_b,
             music_channel: music,
             aux_channel: aux,
             sfx_channel: sfx,
@@ -71,6 +86,8 @@ impl AudioEngine {
             dropped_recorder_frames: Arc::new(AtomicU64::new(0)),
             capture_stream: Arc::new(Mutex::new(None)),
             consumer_slot: Arc::new(Mutex::new(None)),
+            monitor_manager: monitor,
+            playback_manager,
             is_running: Arc::new(AtomicBool::new(false)),
             worker_handle: Arc::new(Mutex::new(None)),
         });
@@ -111,7 +128,6 @@ impl AudioEngine {
 
     /// Start hardware CPAL capture on the selected device
     pub fn start_capture(&self, device_id_or_name: Option<&str>) -> Result<String, String> {
-        // Create 1 second buffer at 48kHz stereo (96000 samples)
         let (producer, consumer, overruns, underruns) =
             create_audio_ring_buffer(self.sample_rate as usize * (CANONICAL_CHANNELS as usize));
 
@@ -121,7 +137,6 @@ impl AudioEngine {
         *self.capture_stream.lock() = Some(stream);
         *self.consumer_slot.lock() = Some(consumer);
 
-        // Store active overrun/underrun references
         self.overrun_count
             .store(overruns.load(Ordering::Relaxed), Ordering::Relaxed);
         self.underrun_count
@@ -140,10 +155,32 @@ impl AudioEngine {
         self.capture_stream.lock().is_some()
     }
 
+    pub fn start_monitor(&self, device_id_or_name: Option<&str>) -> Result<String, String> {
+        self.monitor_manager.start_monitor(device_id_or_name)
+    }
+
+    pub fn stop_monitor(&self) {
+        self.monitor_manager.stop_monitor();
+    }
+
+    pub fn is_monitoring(&self) -> bool {
+        self.monitor_manager.is_monitoring()
+    }
+
+    pub fn current_monitor_device(&self) -> Option<String> {
+        self.monitor_manager.current_device_name()
+    }
+
     pub fn set_channel_fader(&self, channel_id: &str, level: f32) {
         match channel_id {
             "mic" => self.mic_channel.set_fader(level),
-            "music" => self.music_channel.set_fader(level),
+            "deck_a" | "deckA" => self.deck_a_channel.set_fader(level),
+            "deck_b" | "deckB" => self.deck_b_channel.set_fader(level),
+            "music" => {
+                self.music_channel.set_fader(level);
+                self.deck_a_channel.set_fader(level);
+                self.deck_b_channel.set_fader(level);
+            }
             "aux" => self.aux_channel.set_fader(level),
             "sfx" => self.sfx_channel.set_fader(level),
             _ => {}
@@ -153,6 +190,8 @@ impl AudioEngine {
     pub fn set_channel_gain(&self, channel_id: &str, gain_db: f32) {
         match channel_id {
             "mic" => self.mic_channel.set_gain_db(gain_db),
+            "deck_a" | "deckA" => self.deck_a_channel.set_gain_db(gain_db),
+            "deck_b" | "deckB" => self.deck_b_channel.set_gain_db(gain_db),
             "music" => self.music_channel.set_gain_db(gain_db),
             "aux" => self.aux_channel.set_gain_db(gain_db),
             "sfx" => self.sfx_channel.set_gain_db(gain_db),
@@ -163,7 +202,13 @@ impl AudioEngine {
     pub fn set_channel_mute(&self, channel_id: &str, mute: bool) {
         match channel_id {
             "mic" => self.mic_channel.set_mute(mute),
-            "music" => self.music_channel.set_mute(mute),
+            "deck_a" | "deckA" => self.deck_a_channel.set_mute(mute),
+            "deck_b" | "deckB" => self.deck_b_channel.set_mute(mute),
+            "music" => {
+                self.music_channel.set_mute(mute);
+                self.deck_a_channel.set_mute(mute);
+                self.deck_b_channel.set_mute(mute);
+            }
             "aux" => self.aux_channel.set_mute(mute),
             "sfx" => self.sfx_channel.set_mute(mute),
             _ => {}
@@ -173,6 +218,8 @@ impl AudioEngine {
     pub fn get_channel_strips(&self) -> Vec<ChannelStripSnapshot> {
         vec![
             self.mic_channel.snapshot(),
+            self.deck_a_channel.snapshot(),
+            self.deck_b_channel.snapshot(),
             self.music_channel.snapshot(),
             self.aux_channel.snapshot(),
             self.sfx_channel.snapshot(),
@@ -198,7 +245,9 @@ impl AudioEngine {
         is_running.store(true, Ordering::SeqCst);
 
         let mic = self.mic_channel.clone();
-        let music = self.music_channel.clone();
+        let deck_a_strip = self.deck_a_channel.clone();
+        let deck_b_strip = self.deck_b_channel.clone();
+        let music_strip = self.music_channel.clone();
         let aux = self.aux_channel.clone();
         let sfx = self.sfx_channel.clone();
         let master = self.master_bus.clone();
@@ -207,10 +256,13 @@ impl AudioEngine {
         let recorder_tap_tx = self.recorder_tap_tx.clone();
         let dropped_enc = self.dropped_encoder_frames.clone();
         let dropped_rec = self.dropped_recorder_frames.clone();
+        let monitor = self.monitor_manager.clone();
+        let playback = self.playback_manager.clone();
 
         let handle = thread::spawn(move || {
             let mut mic_block = vec![0.0f32; PROCESSING_BLOCK_SAMPLES];
-            let mut music_block = vec![0.0f32; PROCESSING_BLOCK_SAMPLES];
+            let mut deck_a_block = vec![0.0f32; PROCESSING_BLOCK_SAMPLES];
+            let mut deck_b_block = vec![0.0f32; PROCESSING_BLOCK_SAMPLES];
             let mut aux_block = vec![0.0f32; PROCESSING_BLOCK_SAMPLES];
             let mut sfx_block = vec![0.0f32; PROCESSING_BLOCK_SAMPLES];
             let mut master_sum = vec![0.0f32; PROCESSING_BLOCK_SAMPLES];
@@ -218,7 +270,7 @@ impl AudioEngine {
             while is_running.load(Ordering::Relaxed) {
                 let start_time = std::time::Instant::now();
 
-                // 1. Pull input from capture consumer if active, else fill silence
+                // 1. Pull input from capture consumer if active, else silence
                 let has_audio = {
                     let mut cons_guard = consumer_slot.lock();
                     if let Some(consumer) = cons_guard.as_mut() {
@@ -237,30 +289,77 @@ impl AudioEngine {
                 } else {
                     mic.update_meters(&[]);
                 }
-
                 for s in mic_block.iter_mut() {
                     *s *= mic_gain;
                 }
 
-                // 3. Placeholder channels (music, aux, sfx) — currently silence until Phase D
-                music_block.fill(0.0);
+                // 3. Render Deck A
+                let status_a = playback.deck_a.render_block(&mut deck_a_block);
+                if let DeckRenderStatus::Finished { .. } = status_a {
+                    let pb = playback.clone();
+                    thread::spawn(move || {
+                        pb.handle_deck_finished("deck_a");
+                    });
+                }
+
+                // 4. Render Deck B
+                let status_b = playback.deck_b.render_block(&mut deck_b_block);
+                if let DeckRenderStatus::Finished { .. } = status_b {
+                    let pb = playback.clone();
+                    thread::spawn(move || {
+                        pb.handle_deck_finished("deck_b");
+                    });
+                }
+
+                // 5. Apply crossfade gains
+                let (gain_a, gain_b) = playback.compute_crossfade_gains();
+                for s in deck_a_block.iter_mut() {
+                    *s *= gain_a;
+                }
+                for s in deck_b_block.iter_mut() {
+                    *s *= gain_b;
+                }
+
+                // 6. Channel strips for Deck A & Deck B
+                let da_gain = deck_a_strip.compute_linear_gain();
+                deck_a_strip.update_meters(&deck_a_block);
+                for s in deck_a_block.iter_mut() {
+                    *s *= da_gain;
+                }
+
+                let db_gain = deck_b_strip.compute_linear_gain();
+                deck_b_strip.update_meters(&deck_b_block);
+                for s in deck_b_block.iter_mut() {
+                    *s *= db_gain;
+                }
+
+                // Update legacy music strip meters reflecting active playback
+                let active_is_a = playback.active_deck_id() == "deck_a";
+                if active_is_a {
+                    music_strip.update_meters(&deck_a_block);
+                } else {
+                    music_strip.update_meters(&deck_b_block);
+                }
+
+                // Placeholders for aux and sfx
                 aux_block.fill(0.0);
                 sfx_block.fill(0.0);
-                music.update_meters(&[]);
                 aux.update_meters(&[]);
                 sfx.update_meters(&[]);
 
-                // 4. Genuine master summing: sum active channel buffers into master_sum accumulator
+                // 7. Sum all active channels into Master
                 sum_channel_buffers(
-                    &[&mic_block, &music_block, &aux_block, &sfx_block],
+                    &[&mic_block, &deck_a_block, &deck_b_block, &aux_block],
                     &mut master_sum,
                 );
 
-                // 5. Process master bus (gain + soft limiter)
+                // 8. Process Master bus (gain + soft limiter)
                 master.process_master(&mut master_sum);
 
-                // 6. Distribute to master output tap subscribers
-                // Non-blocking overflow policy: drop frame if queue is full, increment drop counter
+                // 9. Feed hardware output monitor stream
+                monitor.push_master_samples(&master_sum);
+
+                // 10. Distribute to master output tap subscribers (encoder & recorder)
                 {
                     let enc_guard = encoder_tap_tx.lock();
                     if let Some(tx) = enc_guard.as_ref() {
@@ -287,7 +386,7 @@ impl AudioEngine {
                     }
                 }
 
-                // 7. Pace processing to ~10ms if not hardware driven
+                // 11. Precise timing pace
                 let elapsed = start_time.elapsed();
                 let target_interval = Duration::from_micros(10_000); // 10ms
                 if elapsed < target_interval {

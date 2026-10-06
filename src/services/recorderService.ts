@@ -43,6 +43,32 @@ class RecorderService {
   public async startRecording(customTitle?: string): Promise<boolean> {
     if (this.state === 'RECORDING') return true;
 
+    // Native Tauri recording branch
+    if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        const res: any = await invoke('recording_start');
+        this.currentSessionId = res.id;
+        this.recordingStartTime = Date.now();
+        this.currentDurationSeconds = 0;
+        this.state = 'RECORDING';
+
+        this.durationInterval = window.setInterval(() => {
+          if (this.state === 'RECORDING') {
+            this.currentDurationSeconds += 1;
+            this.notifyState();
+          }
+        }, 1000);
+
+        this.notifyState();
+        logger.info('Recorder', `Native master recording started: ${res.filePath}`);
+        return true;
+      } catch (err) {
+        logger.error('Recorder', 'Failed to start native recording', { error: err });
+        return false;
+      }
+    }
+
     const stream = audioEngine.getMasterMediaStream();
     if (!stream) {
       logger.error('Recorder', 'Cannot start recording: master audio stream destination is not available');

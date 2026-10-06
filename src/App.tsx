@@ -14,6 +14,8 @@ import { ScheduleWorkspace } from './components/ScheduleWorkspace';
 import { PlaylistWorkspace } from './components/PlaylistWorkspace';
 import { ipc } from './services/ipc';
 import { logger } from './services/logger';
+import { playbackService } from './services/playbackService';
+import { recorderService } from './services/recorderService';
 import { BroadcastStatus } from './types/broadcast';
 import { StreamMetrics } from './types/telemetry';
 import { TranscriptSegment, TranscriptStatus } from './types/transcript';
@@ -138,6 +140,66 @@ export const App: React.FC = () => {
       logger.error('Broadcast', 'Reconnect failed', { error: err });
     }
   };
+
+  // ==========================================
+  // OPERATOR HOTKEY CONTROLS
+  // ==========================================
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Guard against typing in form inputs
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.tagName === 'SELECT' ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+
+      // Space -> Toggle Play/Pause active deck
+      if (e.code === 'Space') {
+        e.preventDefault();
+        playbackService.triggerControlAction('toggle_play_pause');
+      }
+      // M -> Toggle mic mute
+      else if (e.key === 'm' || e.key === 'M') {
+        playbackService.triggerControlAction('toggle_mic_mute');
+      }
+      // R -> Toggle recording
+      else if (e.key === 'r' || e.key === 'R') {
+        if (recorderService.getState() === 'RECORDING') {
+          recorderService.stopRecording();
+        } else {
+          recorderService.startRecording();
+        }
+      }
+      // B -> Toggle broadcast
+      else if (e.key === 'b' || e.key === 'B') {
+        if (status.state === 'CONNECTED') {
+          handleStopBroadcast();
+        } else {
+          handleStartBroadcast();
+        }
+      }
+      // N -> Next track
+      else if (e.key === 'n' || e.key === 'N') {
+        playbackService.triggerControlAction('next_track');
+      }
+      // 1 -> Deck A
+      else if (e.key === '1') {
+        playbackService.triggerControlAction('select_deck', { deckId: 'deck_a' });
+      }
+      // 2 -> Deck B
+      else if (e.key === '2') {
+        playbackService.triggerControlAction('select_deck', { deckId: 'deck_b' });
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [status.state]);
 
   const activeWorkspace = (() => {
     switch (activeTab) {

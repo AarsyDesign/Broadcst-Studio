@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { audioEngine } from '../services/audioEngine';
 import { AudioChannelStrip, MixerState } from '../types/audio';
+import { controlApi } from '../services/controlApi';
 
 const dbToUnit = (db: number): number => Math.max(0, Math.min(1, (db + 60) / 60));
 
@@ -21,16 +22,21 @@ export const MixerWorkspace: React.FC = () => {
 
   const handleFaderChange = (channelId: string, level: number) => {
     audioEngine.setChannelFader(channelId, level);
+    controlApi.execute('audio.set_fader', { channelId, level });
     refresh();
   };
 
   const handleGainChange = (channelId: string, gainDb: number) => {
     audioEngine.setChannelGainDb(channelId, gainDb);
+    controlApi.execute('audio.set_gain', { channelId, gainDb });
     refresh();
   };
 
   const handleToggleMute = (channelId: string) => {
+    const ch = mixerState.channels.find((c) => c.id === channelId);
+    const newMuted = ch ? !ch.muted : true;
     audioEngine.toggleMute(channelId);
+    controlApi.execute('audio.mute', { channelId, muted: newMuted });
     refresh();
   };
 
@@ -41,11 +47,14 @@ export const MixerWorkspace: React.FC = () => {
 
   const handleMasterFaderChange = (level: number) => {
     audioEngine.setMasterFader(level);
+    controlApi.execute('audio.set_fader', { channelId: 'master', level });
     refresh();
   };
 
   const handleToggleMasterMute = () => {
+    const newMuted = !mixerState.masterMuted;
     audioEngine.toggleMasterMute();
+    controlApi.execute('audio.mute', { channelId: 'master', muted: newMuted });
     refresh();
   };
 

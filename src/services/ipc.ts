@@ -217,6 +217,118 @@ class IPCService {
         };
       }
 
+      case 'audio.get_output_devices': {
+        return [
+          {
+            id: 'out-default',
+            name: 'Default System Speaker / Output',
+            isDefault: true,
+            channels: 2,
+            sampleRate: 48000,
+          },
+        ];
+      }
+
+      case 'audio.start_monitor': {
+        return 'Default System Speaker / Output';
+      }
+
+      case 'audio.stop_monitor': {
+        return undefined;
+      }
+
+      case 'deck.load': {
+        return {
+          id: `trk-${Date.now()}`,
+          filePath: params?.filePath ?? '',
+          title: 'Broadcast Track',
+          artist: 'Studio Artist',
+          album: 'Station Sound',
+          durationMs: 180000,
+        };
+      }
+
+      case 'deck.play':
+      case 'deck.pause':
+      case 'deck.stop':
+      case 'deck.seek':
+      case 'deck.set_crossfader':
+      case 'deck.set_auto_advance':
+        return undefined;
+
+      case 'playback.get_snapshot': {
+        return {
+          deckA: {
+            id: 'deck_a',
+            name: 'Deck A',
+            state: 'empty',
+            track: null,
+            positionMs: 0,
+            durationMs: 0,
+            remainingMs: 0,
+            volume: 1.0,
+            cue: false,
+            looping: false,
+          },
+          deckB: {
+            id: 'deck_b',
+            name: 'Deck B',
+            state: 'empty',
+            track: null,
+            positionMs: 0,
+            durationMs: 0,
+            remainingMs: 0,
+            volume: 1.0,
+            cue: false,
+            looping: false,
+          },
+          activeDeck: 'deck_a',
+          crossfader: 0.0,
+          autoAdvance: true,
+          currentTrack: null,
+          isMonitoring: false,
+          monitorDevice: null,
+          broadcastState: 'OFFLINE',
+          isRecording: false,
+        };
+      }
+
+      case 'playlist.get': {
+        return [];
+      }
+
+      case 'playlist.add_file': {
+        return {
+          id: `pl-${Date.now()}`,
+          filePath: params?.filePath ?? '',
+          title: 'Track',
+          artist: 'Artist',
+          durationMs: 240000,
+        };
+      }
+
+      case 'playlist.remove': {
+        return null;
+      }
+
+      case 'playlist.clear': {
+        return undefined;
+      }
+
+      case 'playlist.play_index': {
+        return {
+          id: `trk-${Date.now()}`,
+          filePath: '',
+          title: 'Queued Track',
+          artist: 'Queued Artist',
+          durationMs: 240000,
+        };
+      }
+
+      case 'control.action': {
+        return { success: true };
+      }
+
       case 'metadata.set': {
         if (params?.metadata) {
           shoutcastService.setMetadata(params.metadata);
