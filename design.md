@@ -1,3 +1,63 @@
+# Broadcst Studio Design Direction v0.2
+
+> Current visual contract for the workstation rebuild.
+
+## Design Read
+
+Reading this as: a professional desktop broadcast workstation for radio operators and audio producers, with an engineering-grade visual language and a live-data-driven interface. Dial ENERGY 2 / RHYTHM 3 / MOTION 3.
+
+## Current visual thesis
+
+Broadcst Studio is a workstation, not an admin dashboard.
+
+The interface is organized around five visual primitives:
+
+1. Signal: waveform, level meters, spectrum, signal activity.
+2. Timeline: playlist, recording, transcript, and automation all share time as a first-class axis.
+3. Routing: source to bus to output is visible and understandable.
+4. State: offline, connecting, live, recovering, and error states are persistent and explicit.
+5. Activity: live systems show movement only when the underlying system is active.
+
+## Composition rules
+
+- The On Air workspace gets the largest visual surface for live signal.
+- Mixer uses a continuous console composition, not a grid of cards.
+- Transcript behaves like a live timeline and can map to recording playback.
+- SHOUTcast is a visible output path, not a generic dashboard metric.
+- AI is a secondary operator layer and does not occupy the primary workspace.
+- Developer diagnostics are separated from operator controls.
+- Repeated card grids are not a default layout.
+- A screen has one focal point and secondary information stays visually subordinate.
+
+## Motion contract
+
+Motion must originate from system state, data, or direct manipulation.
+
+Allowed continuous motion:
+- live audio level
+- waveform activity
+- playhead
+- active recording timer
+- connection activity
+
+Allowed state motion:
+- connection transitions
+- panel reveal
+- transcript segment arrival
+- start and stop sequences
+
+Forbidden:
+- decorative floating elements
+- endless attention pulses unrelated to state
+- animation stacks on every element
+- fabricated audio activity when the engine is idle
+
+## Current implementation note
+
+The first UI reset is intentionally focused on the shell, On Air, Mixer, and Transcript workspaces. Existing production services remain the source for behavior while the native Rust audio core is migrated in a later slice.
+
+---
+
 # Broadcast Ecosystem — Product & UI Design
 
 > Status: Design Foundation / V0.1  
