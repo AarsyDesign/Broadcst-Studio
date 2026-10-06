@@ -46,6 +46,7 @@ export const OnAirWorkspace: React.FC<OnAirWorkspaceProps> = ({
   const isLive = status.state === 'CONNECTED';
   const level = dbToUnit(masterRmsDb);
   const peak = dbToUnit(masterPeakDb);
+  const hasAudio = masterPeakDb > -58 || masterRmsDb > -58;
   const recentSegments = useMemo(() => transcriptSegments.slice(-5), [transcriptSegments]);
 
   const waveformPattern = [
@@ -91,7 +92,9 @@ export const OnAirWorkspace: React.FC<OnAirWorkspaceProps> = ({
         <div className="ws-signal-header">
           <div className="ws-signal-title">
             <span>Master signal</span>
-            <span className="ws-kicker">{isLive ? 'flowing' : 'idle'}</span>
+            <span className="ws-kicker">
+              {isLive ? 'broadcasting' : (hasAudio ? 'monitoring signal' : 'idle')}
+            </span>
           </div>
           <div className="ws-signal-caption">
             {status.config.bitrate} kbps / {status.config.codec}
@@ -110,19 +113,22 @@ export const OnAirWorkspace: React.FC<OnAirWorkspaceProps> = ({
           </div>
 
           <div className="ws-wave" data-live={isLive} aria-label={`Master RMS ${masterRmsDb.toFixed(1)} dBFS`}>
-            {waveformPattern.map((shape, index) => (
-              <span
-                key={index}
-                className="ws-wave-bar"
-                style={{
-                  height: isLive ? `${Math.max(2, level * shape * 100)}%` : '2px',
-                  opacity: isLive ? 0.55 + level * 0.45 : 0.22,
-                }}
-              />
-            ))}
+            {waveformPattern.map((shape, index) => {
+              const barHeight = hasAudio ? Math.max(3, level * shape * 100) : 2;
+              return (
+                <span
+                  key={index}
+                  className="ws-wave-bar"
+                  style={{
+                    height: `${barHeight}%`,
+                    opacity: hasAudio ? (isLive ? 0.9 : 0.55) : 0.22,
+                  }}
+                />
+              );
+            })}
           </div>
 
-          <div className="ws-playhead" data-live={isLive} aria-hidden="true" />
+          <div className="ws-playhead" data-live={isLive || hasAudio} aria-hidden="true" />
 
           <div className="ws-signal-footer">
             <span>RMS <strong>{masterRmsDb.toFixed(1)} dBFS</strong></span>

@@ -155,7 +155,7 @@ export const AIWorkspace: React.FC = () => {
             {/* Stream Status */}
             <div className="ws-ai-status-block">
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                <span className="ws-kicker">Stream Health</span>
+                <span className="ws-kicker">Stream Status</span>
                 <span className="ws-badge" data-variant={isLive ? 'live' : 'warning'}>
                   {broadcastStatus.state}
                 </span>
@@ -194,7 +194,7 @@ export const AIWorkspace: React.FC = () => {
             {/* Transcription State */}
             <div className="ws-ai-status-block">
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                <span className="ws-kicker">Speech Intelligence</span>
+                <span className="ws-kicker">Speech Engine</span>
                 <span className="ws-tag">LOCAL MODEL</span>
               </div>
               <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--ws-text)' }}>

@@ -45,11 +45,6 @@ export const PluginsWorkspace: React.FC = () => {
     }
   };
 
-  const handleSimulateCrash = (id: string) => {
-    pluginHost.simulateCrash(id);
-    showToast(`Triggered test exception on ${id}. Caught in error state.`);
-  };
-
   const handleRestartPlugin = async (id: string) => {
     await pluginHost.enablePlugin(id);
     showToast(`Restarted plugin: ${id}`);
@@ -137,7 +132,7 @@ export const PluginsWorkspace: React.FC = () => {
           <div className="ws-kicker">System / Extensibility</div>
           <h1 className="ws-title">Broadcst Plugin API</h1>
           <p className="ws-subtitle">
-            Modular broadcast extensions for real-time DSP, stream mirroring, automation macros, and speech processing.
+            Modular broadcast extensions for real-time audio processing, stream mirroring, automation macros, and speech processing.
           </p>
         </div>
 
@@ -171,17 +166,17 @@ export const PluginsWorkspace: React.FC = () => {
         </div>
       </div>
 
-      {/* Architecture Honesty Banner (Task 5) */}
+      {/* Architecture Honesty Banner */}
       <div className="ws-banner" data-type="notice">
         <div>
           <strong style={{ display: 'block', color: 'var(--ws-text)', marginBottom: '2px' }}>
-            Plugin Runtime: In-Process Prototype Simulation
+            Current Runtime: In-Process Prototype
           </strong>
           <span style={{ color: 'var(--ws-muted)' }}>
-            Plugins are currently evaluated in-process via TypeScript callback hooks. Future architecture roadmap targets fully isolated Web Workers and separate native processes via the Tauri Rust backend.
+            Plugins are executed within the application thread. Target architecture: isolated native plugin process.
           </span>
         </div>
-        <span className="ws-badge" data-variant="warning">PROTOTYPE RUNTIME</span>
+        <span className="ws-badge" data-variant="warning">IN-PROCESS PROTOTYPE</span>
       </div>
 
       {/* Category & Search Toolbar */}
@@ -289,7 +284,7 @@ export const PluginsWorkspace: React.FC = () => {
 
                       {/* Controls */}
                       <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                        {isCrashed ? (
+                        {isCrashed && (
                           <button
                             type="button"
                             className="ws-secondary-action"
@@ -297,16 +292,6 @@ export const PluginsWorkspace: React.FC = () => {
                             onClick={() => handleRestartPlugin(p.manifest.id)}
                           >
                             Restart
-                          </button>
-                        ) : (
-                          <button
-                            type="button"
-                            className="ws-secondary-action"
-                            style={{ height: '30px', fontSize: '10px' }}
-                            onClick={() => handleSimulateCrash(p.manifest.id)}
-                            title="Simulate unhandled exception to test error handling"
-                          >
-                            Test Error
                           </button>
                         )}
 

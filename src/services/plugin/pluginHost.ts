@@ -117,11 +117,11 @@ class PluginHost {
     this.notify();
 
     try {
-      // Safe sandbox execution setup
+      // In-process prototype handler execution
       if (id === 'plugin-auto-ducking') {
-        this.runAutoDuckingSandbox(plugin);
+        this.runAutoDuckingHandler(plugin);
       } else if (id === 'plugin-now-playing-poller') {
-        this.runMetadataPollerSandbox(plugin);
+        this.runMetadataPollerHandler(plugin);
       } else if (id === 'plugin-voice-leveler') {
         plugin.status = 'RUNNING';
       } else {
@@ -132,10 +132,9 @@ class PluginHost {
       this.notify();
       return true;
     } catch (err: any) {
-      // Failure Isolation: Catch error and isolate plugin without taking down broadcast engine!
       plugin.status = 'ERROR';
-      plugin.errorMessage = err?.message || 'Failed to start plugin in sandbox';
-      logger.error('PluginHost', `Plugin failure isolated for ${plugin.manifest.name}: ${plugin.errorMessage}`);
+      plugin.errorMessage = err?.message || 'Failed to start plugin in in-process prototype';
+      logger.error('PluginHost', `Plugin failure in in-process prototype for ${plugin.manifest.name}: ${plugin.errorMessage}`);
       this.notify();
       return false;
     }
@@ -157,7 +156,7 @@ class PluginHost {
     return true;
   }
 
-  // Crash simulation to test failure isolation per architecture.md!
+  // Diagnostic test hook for error handling path
   public simulateCrash(id: string) {
     const plugin = this.plugins.get(id);
     if (!plugin) return;
@@ -169,12 +168,12 @@ class PluginHost {
     }
 
     plugin.status = 'CRASHED';
-    plugin.errorMessage = 'Simulated uncaught exception in worker thread: OutOfBoundsMemoryAccess';
-    logger.error('PluginHost', `Isolated Crash Event on '${plugin.manifest.name}'. Core audio engine remains 100% operational.`);
+    plugin.errorMessage = 'Diagnostic test: InProcessExecutionFault';
+    logger.error('PluginHost', `Diagnostic test event on '${plugin.manifest.name}'`);
     this.notify();
   }
 
-  private runAutoDuckingSandbox(plugin: PluginInstance) {
+  private runAutoDuckingHandler(plugin: PluginInstance) {
     plugin.status = 'RUNNING';
 
     // Auto-ducking loop monitoring mic channel
@@ -199,7 +198,7 @@ class PluginHost {
     this.intervals.set(plugin.manifest.id, interval);
   }
 
-  private runMetadataPollerSandbox(plugin: PluginInstance) {
+  private runMetadataPollerHandler(plugin: PluginInstance) {
     plugin.status = 'RUNNING';
 
     const sampleTracks = [

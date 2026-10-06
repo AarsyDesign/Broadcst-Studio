@@ -139,7 +139,7 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
   const SECTIONS: { id: SettingsSection; label: string; kicker: string }[] = [
     { id: 'station', label: 'Station Profile', kicker: 'Identity' },
     { id: 'shoutcast', label: 'SHOUTcast & Icecast', kicker: 'Transmission' },
-    { id: 'audio', label: 'Audio Engine & DSP', kicker: 'Core Audio' },
+    { id: 'audio', label: 'Audio Engine & Processing', kicker: 'Core Audio' },
     { id: 'recording', label: 'Recording & Archives', kicker: 'Storage' },
     { id: 'transcript', label: 'Speech Transcription', kicker: 'Editorial' },
     { id: 'plugins', label: 'Plugin Environment', kicker: 'Extensibility' },
@@ -585,8 +585,8 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
 
               <div className="ws-banner" data-type="notice" style={{ marginBottom: '16px' }}>
                 <div>
-                  <strong style={{ display: 'block', color: 'var(--ws-text)' }}>Current Sandbox State: In-Process Simulation</strong>
-                  <span>Plugin instances run in the UI process. Future native Tauri updates will move plugins into isolated worker processes.</span>
+                  <strong style={{ display: 'block', color: 'var(--ws-text)' }}>Current Runtime: In-Process Prototype</strong>
+                  <span>Plugin instances currently run in-process within the local application thread. Target architecture: isolated native plugin process.</span>
                 </div>
               </div>
 

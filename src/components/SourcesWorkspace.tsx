@@ -142,7 +142,7 @@ export const SourcesWorkspace: React.FC = () => {
               CHANNELS: <strong style={{ color: 'var(--ws-text)', fontFamily: 'var(--font-mono)' }}>{activeDevice?.channels || 2} (Stereo)</strong>
             </div>
             <div>
-              LATENCY EST: <strong style={{ color: 'var(--ws-text)', fontFamily: 'var(--font-mono)' }}>5.8 ms</strong>
+              LATENCY (EST): <strong style={{ color: 'var(--ws-text)', fontFamily: 'var(--font-mono)' }}>~10 ms (512 smp)</strong>
             </div>
           </div>
         </div>

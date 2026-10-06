@@ -289,7 +289,17 @@ export const PlaylistWorkspace: React.FC = () => {
             </div>
           </div>
 
-          <div className="ws-deck-progress-bar">
+          <div
+            className="ws-deck-progress-bar"
+            style={{ cursor: 'pointer' }}
+            title="Click to seek track position"
+            onClick={(e) => {
+              if (!activeTrack) return;
+              const rect = e.currentTarget.getBoundingClientRect();
+              const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+              setCurrentSeconds(Math.round(ratio * activeTrack.durationSeconds));
+            }}
+          >
             <div className="ws-deck-progress-fill" style={{ width: `${progressPercent}%` }} />
           </div>
 
