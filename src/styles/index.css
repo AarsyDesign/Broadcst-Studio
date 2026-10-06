@@ -1,16 +1,16 @@
 @import './tokens.css';
+@import './workstation.css';
 
 *, *::before, *::after {
   box-sizing: border-box;
-  margin: 0;
-  padding: 0;
 }
 
 html, body, #root {
   width: 100%;
   height: 100%;
+  margin: 0;
   overflow: hidden;
-  background-color: var(--color-bg);
+  background: var(--color-bg);
   color: var(--color-text-primary);
   font-family: var(--font-sans);
   font-size: var(--text-body);
@@ -20,56 +20,15 @@ html, body, #root {
   user-select: none;
 }
 
-/* Accessible and Visible Focus Indicator (WCAG AA & antislop R-32) */
-:focus-visible {
-  outline: 2px solid var(--color-live);
-  outline-offset: 2px;
+button, input, select, textarea {
+  font: inherit;
 }
 
-button:focus:not(:focus-visible),
-input:focus:not(:focus-visible),
-select:focus:not(:focus-visible) {
-  outline: none;
-}
-
-/* Typography Utility */
-.font-mono {
-  font-family: var(--font-mono);
-  font-feature-settings: 'tnum' 1;
-  font-variant-numeric: tabular-nums;
-}
-
-/* Custom Scrollbars */
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-
-::-webkit-scrollbar-track {
-  background: var(--color-bg);
-}
-
-::-webkit-scrollbar-thumb {
-  background: var(--color-border);
-  border-radius: var(--radius-sm);
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: var(--color-text-muted);
-}
-
-/* Button & Interactive Resets */
 button {
-  font-family: inherit;
-  font-size: inherit;
-  border: none;
+  border: 0;
   background: transparent;
   color: inherit;
   cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  transition: background-color var(--motion-fast), border-color var(--motion-fast), color var(--motion-fast);
 }
 
 button:disabled {
@@ -77,17 +36,36 @@ button:disabled {
   opacity: 0.5;
 }
 
-input, select {
-  font-family: inherit;
-  font-size: inherit;
+input, select, textarea {
   color: inherit;
   background: var(--color-surface);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  padding: var(--space-2) var(--space-3);
-  transition: border-color var(--motion-fast);
 }
 
-input:focus, select:focus {
-  border-color: var(--color-live);
+:focus-visible {
+  outline: 2px solid var(--color-live);
+  outline-offset: 2px;
+}
+
+.font-mono {
+  font-family: var(--font-mono);
+  font-feature-settings: 'tnum' 1;
+  font-variant-numeric: tabular-nums;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-muted);
 }
