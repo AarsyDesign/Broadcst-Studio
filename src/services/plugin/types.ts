@@ -4,6 +4,7 @@ export type PluginCategory =
   | 'output'
   | 'metadata'
   | 'automation'
+  | 'transcript'
   | 'utility';
 
 export type PluginPermission =
@@ -38,7 +39,8 @@ export interface PluginInstance {
   enabled: boolean;
   errorMessage?: string;
   lastExecutionMs?: number;
-  memoryEstimateKb?: number;
+  /** In-process prototype simulation status vs isolated native worker */
+  runtimeMode: 'in_process_prototype' | 'isolated_worker';
 }
 
 export interface PluginExecutionContext {

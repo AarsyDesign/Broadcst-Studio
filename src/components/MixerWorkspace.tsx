@@ -75,7 +75,10 @@ export const MixerWorkspace: React.FC = () => {
           return (
             <div className="ws-strip" key={channel.id}>
               <div className="ws-strip-head">
-                <span className="ws-strip-source">{channel.sourceType.replace('_', ' ')}</span>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span className="ws-strip-source">{channel.sourceType.replace('_', ' ')}</span>
+                  <span className="ws-tag">→ MASTER</span>
+                </div>
                 <span className="ws-strip-name">{channel.name}</span>
               </div>
 
@@ -143,13 +146,21 @@ export const MixerWorkspace: React.FC = () => {
 
         <div className="ws-strip ws-strip--master">
           <div className="ws-strip-head">
-            <span className="ws-strip-source">Output</span>
-            <span className="ws-strip-name">Master</span>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span className="ws-strip-source">MAIN BUS</span>
+              <span
+                className="ws-badge"
+                data-variant={mixerState.masterPeakDb >= -0.5 ? 'danger' : mixerState.masterPeakDb >= -3 ? 'warning' : 'live'}
+              >
+                {mixerState.masterPeakDb >= -0.5 ? 'CLIP' : 'OK'}
+              </span>
+            </div>
+            <span className="ws-strip-name">Master Output</span>
           </div>
 
           <div className="ws-strip-gain">
-            <label>MASTER</label>
-            <output>{formatDb(mixerState.masterGainDb)} dB</output>
+            <label>HEADROOM</label>
+            <output>{Math.max(0, 0 - mixerState.masterPeakDb).toFixed(1)} dB</output>
           </div>
 
           <div className="ws-strip-control">

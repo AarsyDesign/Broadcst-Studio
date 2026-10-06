@@ -1014,3 +1014,522 @@
     display: none;
   }
 }
+
+/* ==========================================================================
+   WORKSTATION REUSABLE PRIMITIVES & EXTENSIONS
+   ========================================================================== */
+
+/* Workstation Badges & Tags */
+.ws-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-size: 9px;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-family: var(--font-mono);
+  border: 1px solid var(--ws-line);
+  background: var(--ws-panel-2);
+  color: var(--ws-muted);
+}
+.ws-badge[data-variant="live"] {
+  border-color: color-mix(in srgb, var(--ws-live) 40%, var(--ws-line));
+  background: color-mix(in srgb, var(--ws-live) 10%, transparent);
+  color: var(--ws-live);
+}
+.ws-badge[data-variant="warning"] {
+  border-color: color-mix(in srgb, var(--ws-warning) 40%, var(--ws-line));
+  background: color-mix(in srgb, var(--ws-warning) 10%, transparent);
+  color: var(--ws-warning);
+}
+.ws-badge[data-variant="danger"] {
+  border-color: color-mix(in srgb, var(--ws-danger) 40%, var(--ws-line));
+  background: color-mix(in srgb, var(--ws-danger) 10%, transparent);
+  color: var(--ws-danger);
+}
+.ws-badge[data-variant="info"] {
+  border-color: color-mix(in srgb, var(--ws-info) 40%, var(--ws-line));
+  background: color-mix(in srgb, var(--ws-info) 10%, transparent);
+  color: var(--ws-info);
+}
+
+.ws-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 8.5px;
+  font-family: var(--font-mono);
+  color: var(--ws-subtle);
+  background: var(--ws-panel-3);
+  border: 1px solid var(--ws-line);
+}
+
+/* Tabs switcher */
+.ws-tabs {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--ws-line);
+  border-radius: 7px;
+  background: var(--ws-panel);
+}
+.ws-tab-btn {
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--ws-muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+  transition: all var(--ws-fast);
+}
+.ws-tab-btn:hover {
+  color: var(--ws-text);
+  background: var(--ws-panel-2);
+}
+.ws-tab-btn[data-active="true"] {
+  color: var(--ws-text);
+  background: var(--ws-panel-2);
+  border-color: var(--ws-line);
+}
+
+/* Workstation Tables */
+.ws-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+.ws-table th {
+  padding: 8px 12px;
+  text-align: left;
+  font-size: 9px;
+  font-weight: 780;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ws-subtle);
+  border-bottom: 1px solid var(--ws-line);
+  background: var(--ws-panel-2);
+}
+.ws-table td {
+  padding: 9px 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--ws-line) 45%, transparent);
+  color: var(--ws-text);
+}
+.ws-table tr:hover td {
+  background: color-mix(in srgb, var(--ws-panel-2) 60%, transparent);
+}
+
+/* Notification & Toast */
+.ws-toast {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  border: 1px solid var(--ws-line);
+  border-radius: 7px;
+  background: var(--ws-panel-2);
+  color: var(--ws-text);
+  font-size: 11px;
+  font-weight: 600;
+  box-shadow: 0 8px 24px var(--ws-shadow);
+  z-index: 1000;
+  animation: ws-fade-in var(--ws-normal);
+}
+
+/* Banner / Honesty Callout */
+.ws-banner {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border: 1px solid var(--ws-line);
+  border-radius: 7px;
+  background: var(--ws-panel-2);
+  font-size: 11px;
+  line-height: 1.5;
+}
+.ws-banner[data-type="notice"] {
+  border-color: color-mix(in srgb, var(--ws-info) 35%, var(--ws-line));
+  background: color-mix(in srgb, var(--ws-info) 6%, var(--ws-panel));
+}
+.ws-banner[data-type="warning"] {
+  border-color: color-mix(in srgb, var(--ws-warning) 35%, var(--ws-line));
+  background: color-mix(in srgb, var(--ws-warning) 6%, var(--ws-panel));
+}
+
+/* ==========================================================================
+   SOURCES WORKSPACE
+   ========================================================================== */
+.ws-sources-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(320px, 1fr);
+  gap: 14px;
+  min-height: 0;
+  flex: 1;
+}
+.ws-source-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  padding: 12px 14px;
+  border: 1px solid var(--ws-line);
+  background: var(--ws-panel);
+  border-radius: 7px;
+  transition: all var(--ws-fast);
+}
+.ws-source-card:hover {
+  border-color: color-mix(in srgb, var(--ws-text) 24%, var(--ws-line));
+  transform: translateY(-1px);
+}
+.ws-source-card[data-active="true"] {
+  border-color: color-mix(in srgb, var(--ws-live) 50%, var(--ws-line));
+  background: color-mix(in srgb, var(--ws-live) 3%, var(--ws-panel));
+}
+.ws-source-icon-box {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  background: var(--ws-panel-2);
+  border: 1px solid var(--ws-line);
+  color: var(--ws-muted);
+}
+.ws-source-card[data-active="true"] .ws-source-icon-box {
+  color: var(--ws-live);
+  border-color: color-mix(in srgb, var(--ws-live) 40%, var(--ws-line));
+}
+
+/* ==========================================================================
+   PLAYLIST WORKSPACE
+   ========================================================================== */
+.ws-playlist-layout {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: 12px;
+  height: 100%;
+}
+.ws-deck {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(280px, 0.9fr);
+  gap: 14px;
+  padding: 14px 16px;
+  border: 1px solid var(--ws-line);
+  background: var(--ws-panel);
+  border-radius: 7px;
+}
+.ws-deck-now {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ws-deck-track-title {
+  font-size: 18px;
+  font-weight: 760;
+  letter-spacing: -0.02em;
+}
+.ws-deck-track-artist {
+  color: var(--ws-muted);
+  font-size: 12px;
+}
+.ws-deck-progress-bar {
+  position: relative;
+  height: 6px;
+  background: var(--ws-panel-3);
+  border-radius: 3px;
+  overflow: hidden;
+  margin-top: 6px;
+}
+.ws-deck-progress-fill {
+  height: 100%;
+  background: var(--ws-live);
+  transition: width 200ms linear;
+}
+.ws-deck-times {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--ws-subtle);
+}
+
+/* ==========================================================================
+   SCHEDULE WORKSPACE
+   ========================================================================== */
+.ws-schedule-layout {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: 12px;
+  height: 100%;
+}
+.ws-schedule-header-hero {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  padding: 12px 16px;
+  border: 1px solid var(--ws-line);
+  background: var(--ws-panel);
+  border-radius: 7px;
+}
+.ws-program-row {
+  display: grid;
+  grid-template-columns: 90px minmax(0, 1.5fr) 110px 100px auto;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 14px;
+  border: 1px solid var(--ws-line);
+  background: var(--ws-panel);
+  border-radius: 6px;
+  margin-bottom: 7px;
+  transition: all var(--ws-fast);
+}
+.ws-program-row:hover {
+  background: var(--ws-panel-2);
+  transform: translateX(2px);
+}
+.ws-program-row[data-current="true"] {
+  border-color: color-mix(in srgb, var(--ws-live) 50%, var(--ws-line));
+  background: color-mix(in srgb, var(--ws-live) 4%, var(--ws-panel));
+}
+
+/* ==========================================================================
+   RECORDINGS WORKSPACE
+   ========================================================================== */
+.ws-recordings-layout {
+  display: grid;
+  grid-template-columns: minmax(300px, 1fr) minmax(420px, 1.6fr);
+  gap: 14px;
+  min-height: 0;
+  height: calc(100% - 70px);
+}
+.ws-session-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 11px 14px;
+  border: 1px solid var(--ws-line);
+  border-radius: 6px;
+  background: var(--ws-panel);
+  margin-bottom: 7px;
+  cursor: pointer;
+  transition: all var(--ws-fast);
+}
+.ws-session-row:hover {
+  background: var(--ws-panel-2);
+  transform: translateX(2px);
+}
+.ws-session-row[data-active="true"] {
+  border-color: color-mix(in srgb, var(--ws-live) 50%, var(--ws-line));
+  background: var(--ws-panel-2);
+}
+
+/* ==========================================================================
+   AUTOMATION WORKSPACE
+   ========================================================================== */
+.ws-flow-card {
+  border: 1px solid var(--ws-line);
+  border-radius: 7px;
+  background: var(--ws-panel);
+  padding: 14px;
+  margin-bottom: 12px;
+  transition: all var(--ws-fast);
+}
+.ws-flow-card:hover {
+  border-color: color-mix(in srgb, var(--ws-text) 22%, var(--ws-line));
+}
+.ws-flow-pipeline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 10px 0;
+  padding: 10px 12px;
+  background: var(--ws-panel-2);
+  border: 1px solid var(--ws-line);
+  border-radius: 6px;
+}
+.ws-flow-node {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 8px;
+  background: var(--ws-panel-3);
+  border: 1px solid var(--ws-line);
+  border-radius: 5px;
+}
+.ws-flow-node-type {
+  font-size: 8px;
+  font-weight: 750;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ws-subtle);
+  font-family: var(--font-mono);
+}
+.ws-flow-node-val {
+  font-size: 10.5px;
+  font-weight: 650;
+  color: var(--ws-text);
+}
+.ws-flow-arrow {
+  color: var(--ws-subtle);
+  font-size: 11px;
+}
+
+/* ==========================================================================
+   AI ASSISTANT WORKSPACE
+   ========================================================================== */
+.ws-ai-layout {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: 12px;
+  height: 100%;
+}
+.ws-ai-console-header {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+.ws-ai-status-block {
+  padding: 12px 14px;
+  border: 1px solid var(--ws-line);
+  background: var(--ws-panel);
+  border-radius: 7px;
+}
+.ws-ai-action-btn {
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--ws-line);
+  border-radius: 6px;
+  background: var(--ws-panel-2);
+  color: var(--ws-text);
+  font-size: 11px;
+  font-weight: 650;
+  cursor: pointer;
+  transition: all var(--ws-fast);
+}
+.ws-ai-action-btn:hover {
+  border-color: var(--ws-live);
+  color: var(--ws-live);
+  transform: translateY(-1px);
+}
+.ws-chat-container {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  border: 1px solid var(--ws-line);
+  border-radius: 7px;
+  background: var(--ws-panel);
+  overflow: hidden;
+}
+.ws-chat-stream {
+  padding: 14px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.ws-chat-bubble {
+  max-width: 80%;
+  padding: 10px 14px;
+  border-radius: 7px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.ws-chat-bubble[data-sender="user"] {
+  align-self: flex-end;
+  background: var(--ws-panel-3);
+  border: 1px solid var(--ws-line);
+  color: var(--ws-text);
+}
+.ws-chat-bubble[data-sender="assistant"] {
+  align-self: flex-start;
+  background: var(--ws-panel-2);
+  border: 1px solid color-mix(in srgb, var(--ws-live) 25%, var(--ws-line));
+  color: var(--ws-text);
+}
+
+/* ==========================================================================
+   SETTINGS WORKSPACE
+   ========================================================================== */
+.ws-settings-layout {
+  display: grid;
+  grid-template-columns: 210px minmax(0, 1fr);
+  gap: 16px;
+  min-height: 0;
+  height: calc(100% - 70px);
+}
+.ws-settings-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px;
+  border: 1px solid var(--ws-line);
+  border-radius: 7px;
+  background: var(--ws-panel);
+}
+.ws-settings-nav-btn {
+  display: flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: 5px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--ws-muted);
+  font-size: 11px;
+  font-weight: 650;
+  cursor: pointer;
+  text-align: left;
+  transition: all var(--ws-fast);
+}
+.ws-settings-nav-btn:hover {
+  color: var(--ws-text);
+  background: var(--ws-panel-2);
+}
+.ws-settings-nav-btn[data-active="true"] {
+  color: var(--ws-text);
+  background: var(--ws-panel-2);
+  border-color: var(--ws-line);
+}
+.ws-settings-body {
+  border: 1px solid var(--ws-line);
+  border-radius: 7px;
+  background: var(--ws-panel);
+  padding: 18px;
+  overflow-y: auto;
+}
+.ws-form-group {
+  margin-bottom: 16px;
+}
+.ws-form-label {
+  display: block;
+  font-size: 10px;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ws-subtle);
+  margin-bottom: 6px;
+}
+.ws-form-help {
+  font-size: 10px;
+  color: var(--ws-muted);
+  margin-top: 4px;
+}
+
+@keyframes ws-fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}

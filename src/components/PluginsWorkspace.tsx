@@ -10,7 +10,7 @@ export const PluginsWorkspace: React.FC = () => {
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
 
-  // Import Modal
+  // Import / Sideload Modal
   const [showImportModal, setShowImportModal] = useState(false);
   const [importJson, setImportJson] = useState('');
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -47,7 +47,7 @@ export const PluginsWorkspace: React.FC = () => {
 
   const handleSimulateCrash = (id: string) => {
     pluginHost.simulateCrash(id);
-    showToast(`Simulated crash on ${id}. Audio engine remains unaffected.`);
+    showToast(`Triggered test exception on ${id}. Caught in error state.`);
   };
 
   const handleRestartPlugin = async (id: string) => {
@@ -58,7 +58,7 @@ export const PluginsWorkspace: React.FC = () => {
   const handleInstallFromRegistry = async (pluginId: string, name: string) => {
     const success = await pluginRegistry.installPlugin(pluginId);
     if (success) {
-      showToast(`Installed and enabled "${name}"`);
+      showToast(`Installed & activated "${name}"`);
     } else {
       showToast(`Failed to install "${name}"`);
     }
@@ -85,33 +85,21 @@ export const PluginsWorkspace: React.FC = () => {
       await pluginHost.enablePlugin(manifest.id);
       setShowImportModal(false);
       setImportJson('');
-      showToast(`Custom plugin "${manifest.name}" imported and running`);
+      showToast(`Custom plugin "${manifest.name}" registered and activated`);
     } catch (err: any) {
       showToast(`Import error: ${err.message}`);
     }
   };
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'RUNNING':
-        return 'var(--color-live)';
-      case 'STARTING':
-        return 'var(--color-warning)';
-      case 'ERROR':
-      case 'CRASHED':
-        return 'var(--color-error)';
-      default:
-        return 'var(--color-text-muted)';
-    }
-  };
-
-  const categories = [
-    { id: 'all', label: 'ALL CATEGORIES' },
-    { id: 'AudioEffect', label: 'AUDIO EFFECTS' },
-    { id: 'Utility', label: 'UTILITIES' },
-    { id: 'Metadata', label: 'METADATA' },
-    { id: 'Automation', label: 'AUTOMATION' },
-    { id: 'Output', label: 'OUTPUTS' },
+  const CATEGORIES: { id: string; label: string }[] = [
+    { id: 'all', label: 'All Categories' },
+    { id: 'audio_effect', label: 'Audio Effects' },
+    { id: 'audio_source', label: 'Audio Sources' },
+    { id: 'output', label: 'Outputs' },
+    { id: 'metadata', label: 'Metadata' },
+    { id: 'automation', label: 'Automation' },
+    { id: 'transcript', label: 'Transcripts' },
+    { id: 'utility', label: 'Utilities' },
   ];
 
   const filteredInstalled = plugins.filter((p) => {
@@ -125,7 +113,7 @@ export const PluginsWorkspace: React.FC = () => {
     return true;
   });
 
-  const filteredRegistry = catalog.filter((item) => {
+  const filteredCatalog = catalog.filter((item) => {
     if (selectedCategory !== 'all' && item.manifest.category.toLowerCase() !== selectedCategory.toLowerCase()) {
       return false;
     }
@@ -142,555 +130,360 @@ export const PluginsWorkspace: React.FC = () => {
   });
 
   return (
-    <div
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        width: '100%',
-        height: '100%',
-        backgroundColor: 'var(--color-bg)',
-        overflow: 'hidden',
-      }}
-    >
-      {/* Top Header */}
-      <header
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          padding: 'var(--space-3) var(--space-6)',
-          backgroundColor: 'var(--color-surface)',
-          borderBottom: '1px solid var(--color-border)',
-        }}
-      >
+    <section className="ws-workspace" style={{ display: 'grid', gridTemplateRows: 'auto auto auto minmax(0, 1fr)', gap: '12px', height: '100%' }}>
+      {/* Command & Control Bar */}
+      <div className="ws-command-row">
         <div>
-          <h1 style={{ fontSize: 'var(--text-h2)', margin: 0, fontWeight: 700, textTransform: 'uppercase' }}>
-            Ecosystem Plugins & Extensions
-          </h1>
-          <p style={{ fontSize: 'var(--text-micro)', color: 'var(--color-text-secondary)', margin: '2px 0 0 0' }}>
-            Isolated worker execution ensures plugin crashes never interrupt the on-air audio transmission.
+          <div className="ws-kicker">System / Extensibility</div>
+          <h1 className="ws-title">Broadcst Plugin API</h1>
+          <p className="ws-subtitle">
+            Modular broadcast extensions for real-time DSP, stream mirroring, automation macros, and speech processing.
           </p>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
-          {/* Sub-tab switcher */}
-          <div
-            style={{
-              display: 'flex',
-              backgroundColor: 'var(--color-bg)',
-              borderRadius: 'var(--radius-sm)',
-              padding: '2px',
-              border: '1px solid var(--color-border)',
-            }}
-          >
+        <div className="ws-transport">
+          <div className="ws-tabs">
             <button
+              type="button"
+              className="ws-tab-btn"
+              data-active={activeSubTab === 'installed'}
               onClick={() => setActiveSubTab('installed')}
-              style={{
-                padding: 'var(--space-1) var(--space-3)',
-                borderRadius: 'var(--radius-sm)',
-                border: 'none',
-                backgroundColor: activeSubTab === 'installed' ? 'var(--color-surface-elevated)' : 'transparent',
-                color: activeSubTab === 'installed' ? 'var(--color-live)' : 'var(--color-text-secondary)',
-                fontWeight: activeSubTab === 'installed' ? 700 : 400,
-                fontSize: 'var(--text-small)',
-                cursor: 'pointer',
-              }}
             >
               Installed ({plugins.length})
             </button>
             <button
+              type="button"
+              className="ws-tab-btn"
+              data-active={activeSubTab === 'registry'}
               onClick={() => setActiveSubTab('registry')}
-              style={{
-                padding: 'var(--space-1) var(--space-3)',
-                borderRadius: 'var(--radius-sm)',
-                border: 'none',
-                backgroundColor: activeSubTab === 'registry' ? 'var(--color-surface-elevated)' : 'transparent',
-                color: activeSubTab === 'registry' ? 'var(--color-live)' : 'var(--color-text-secondary)',
-                fontWeight: activeSubTab === 'registry' ? 700 : 400,
-                fontSize: 'var(--text-small)',
-                cursor: 'pointer',
-              }}
             >
-              Plugin Registry ({catalog.length})
+              Catalog ({catalog.length})
             </button>
           </div>
 
           <button
+            type="button"
+            className="ws-secondary-action"
             onClick={() => setShowImportModal(true)}
-            style={{
-              padding: 'var(--space-2) var(--space-3)',
-              borderRadius: 'var(--radius-sm)',
-              border: '1px solid var(--color-border)',
-              backgroundColor: 'var(--color-surface-elevated)',
-              color: 'var(--color-text-primary)',
-              fontSize: 'var(--text-small)',
-              cursor: 'pointer',
-            }}
           >
-            + Sideload Plugin
+            + Sideload Manifest
           </button>
         </div>
-      </header>
-
-      {/* Toast Notification */}
-      {toastMessage && (
-        <div
-          style={{
-            position: 'absolute',
-            top: 50,
-            right: 24,
-            padding: 'var(--space-2) var(--space-4)',
-            backgroundColor: 'var(--color-surface-elevated)',
-            border: '1px solid var(--color-live)',
-            borderRadius: 'var(--radius-sm)',
-            color: 'var(--color-text-primary)',
-            fontSize: 'var(--text-small)',
-            zIndex: 100,
-            boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
-          }}
-        >
-          {toastMessage}
-        </div>
-      )}
-
-      {/* Search & Filter Strip */}
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          padding: 'var(--space-3) var(--space-6)',
-          backgroundColor: 'var(--color-surface)',
-          borderBottom: '1px solid var(--color-border)',
-          gap: 'var(--space-4)',
-        }}
-      >
-        <div style={{ display: 'flex', gap: 'var(--space-1)', overflowX: 'auto' }}>
-          {categories.map((c) => (
-            <button
-              key={c.id}
-              onClick={() => setSelectedCategory(c.id)}
-              style={{
-                padding: 'var(--space-1) var(--space-3)',
-                borderRadius: 'var(--radius-sm)',
-                border: '1px solid var(--color-border)',
-                backgroundColor: selectedCategory === c.id ? 'var(--color-surface-elevated)' : 'transparent',
-                color: selectedCategory === c.id ? 'var(--color-live)' : 'var(--color-text-secondary)',
-                fontSize: 'var(--text-micro)',
-                fontWeight: selectedCategory === c.id ? 700 : 400,
-                cursor: 'pointer',
-                whiteSpace: 'nowrap',
-              }}
-            >
-              {c.label}
-            </button>
-          ))}
-        </div>
-
-        <input
-          type="text"
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          placeholder="Filter plugins by name, keywords, or author..."
-          style={{
-            minWidth: 280,
-            padding: 'var(--space-1) var(--space-3)',
-            backgroundColor: 'var(--color-bg)',
-            border: '1px solid var(--color-border)',
-            borderRadius: 'var(--radius-sm)',
-            color: 'var(--color-text-primary)',
-            fontSize: 'var(--text-small)',
-            outline: 'none',
-          }}
-        />
       </div>
 
-      {/* Main Content Area */}
-      <div
-        style={{
-          flex: 1,
-          overflowY: 'auto',
-          padding: 'var(--space-6)',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 'var(--space-4)',
-        }}
-      >
-        {/* SUBTAB 1: INSTALLED PLUGINS */}
-        {activeSubTab === 'installed' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+      {/* Architecture Honesty Banner (Task 5) */}
+      <div className="ws-banner" data-type="notice">
+        <div>
+          <strong style={{ display: 'block', color: 'var(--ws-text)', marginBottom: '2px' }}>
+            Plugin Runtime: In-Process Prototype Simulation
+          </strong>
+          <span style={{ color: 'var(--ws-muted)' }}>
+            Plugins are currently evaluated in-process via TypeScript callback hooks. Future architecture roadmap targets fully isolated Web Workers and separate native processes via the Tauri Rust backend.
+          </span>
+        </div>
+        <span className="ws-badge" data-variant="warning">PROTOTYPE RUNTIME</span>
+      </div>
+
+      {/* Category & Search Toolbar */}
+      <div className="ws-toolbar">
+        <div className="ws-toolbar-group">
+          <span className="ws-toolbar-label">Category</span>
+          <select
+            className="ws-select"
+            value={selectedCategory}
+            onChange={(e) => setSelectedCategory(e.target.value)}
+          >
+            {CATEGORIES.map((cat) => (
+              <option key={cat.id} value={cat.id}>
+                {cat.label}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="ws-toolbar-group" style={{ flex: 1 }}>
+          <input
+            type="text"
+            className="ws-input"
+            placeholder="Search plugins by name, tag, or author..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+          />
+        </div>
+      </div>
+
+      {/* Content Area */}
+      <div style={{ overflowY: 'auto', minHeight: 0 }}>
+        {activeSubTab === 'installed' ? (
+          <div>
             {filteredInstalled.length === 0 ? (
-              <div
-                style={{
-                  padding: 'var(--space-6)',
-                  textAlign: 'center',
-                  backgroundColor: 'var(--color-surface)',
-                  borderRadius: 'var(--radius-md)',
-                  color: 'var(--color-text-secondary)',
-                }}
-              >
-                No installed plugins match the filter. Browse the Plugin Registry tab to install new tools.
+              <div className="ws-empty">
+                <div>
+                  <strong>No Installed Plugins Matching Filter</strong>
+                  <p>Switch categories or browse the Ecosystem Catalog to install plugins.</p>
+                </div>
               </div>
             ) : (
-              filteredInstalled.map((p) => (
-                <div
-                  key={p.manifest.id}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    padding: 'var(--space-4)',
-                    backgroundColor: 'var(--color-surface)',
-                    border: '1px solid var(--color-border)',
-                    borderRadius: 'var(--radius-md)',
-                  }}
-                >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-4)' }}>
-                    {/* Status Pill */}
+              <div style={{ display: 'grid', gap: '10px' }}>
+                {filteredInstalled.map((p) => {
+                  const isRunning = p.status === 'RUNNING';
+                  const isCrashed = p.status === 'CRASHED' || p.status === 'ERROR';
+
+                  return (
                     <div
+                      key={p.manifest.id}
                       style={{
-                        display: 'flex',
+                        padding: '14px 16px',
+                        border: '1px solid var(--ws-line)',
+                        borderRadius: '7px',
+                        background: 'var(--ws-panel)',
+                        display: 'grid',
+                        gridTemplateColumns: 'minmax(0, 1fr) auto',
+                        gap: '14px',
                         alignItems: 'center',
-                        gap: 'var(--space-2)',
-                        minWidth: 100,
                       }}
                     >
-                      <span
-                        style={{
-                          width: 8,
-                          height: 8,
-                          borderRadius: '50%',
-                          backgroundColor: getStatusColor(p.status),
-                          boxShadow: p.status === 'RUNNING' ? '0 0 6px var(--color-live)' : 'none',
-                        }}
-                      />
-                      <span
-                        style={{
-                          fontSize: 'var(--text-micro)',
-                          fontWeight: 700,
-                          color: getStatusColor(p.status),
-                        }}
-                      >
-                        {p.status}
-                      </span>
-                    </div>
-
-                    <div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
-                        <span style={{ fontSize: 'var(--text-body)', fontWeight: 700 }}>{p.manifest.name}</span>
-                        <span style={{ fontSize: 'var(--text-micro)', color: 'var(--color-text-muted)' }}>
-                          v{p.manifest.version}
-                        </span>
-                        <span
-                          style={{
-                            padding: '1px 6px',
-                            borderRadius: 'var(--radius-sm)',
-                            fontSize: 'var(--text-micro)',
-                            backgroundColor: 'var(--color-surface-elevated)',
-                            color: 'var(--color-text-secondary)',
-                            border: '1px solid var(--color-border)',
-                          }}
-                        >
-                          {p.manifest.category}
-                        </span>
-                      </div>
-
-                      <div style={{ fontSize: 'var(--text-small)', color: 'var(--color-text-secondary)', marginTop: '2px' }}>
-                        {p.manifest.description}
-                      </div>
-
-                      {p.errorMessage && (
-                        <div style={{ fontSize: 'var(--text-micro)', color: 'var(--color-error)', marginTop: '4px' }}>
-                          Error: {p.errorMessage}
-                        </div>
-                      )}
-
-                      <div style={{ fontSize: 'var(--text-micro)', color: 'var(--color-text-muted)', marginTop: '4px' }}>
-                        Author: {p.manifest.author} | Memory: ~{p.memoryEstimateKb} KB | Permissions: {p.manifest.permissions.join(', ')}
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Actions */}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
-                    {p.status === 'CRASHED' || p.status === 'ERROR' ? (
-                      <button
-                        onClick={() => handleRestartPlugin(p.manifest.id)}
-                        style={{
-                          padding: 'var(--space-1) var(--space-3)',
-                          borderRadius: 'var(--radius-sm)',
-                          border: 'none',
-                          backgroundColor: 'var(--color-live)',
-                          color: 'var(--color-live-text)',
-                          fontWeight: 600,
-                          fontSize: 'var(--text-small)',
-                          cursor: 'pointer',
-                        }}
-                      >
-                        Restart
-                      </button>
-                    ) : (
-                      <>
-                        <button
-                          onClick={() => handleTogglePlugin(p.manifest.id, p.enabled)}
-                          style={{
-                            padding: 'var(--space-1) var(--space-3)',
-                            borderRadius: 'var(--radius-sm)',
-                            border: '1px solid var(--color-border)',
-                            backgroundColor: p.enabled ? 'var(--color-surface-elevated)' : 'transparent',
-                            color: p.enabled ? 'var(--color-live)' : 'var(--color-text-muted)',
-                            fontSize: 'var(--text-small)',
-                            fontWeight: 600,
-                            cursor: 'pointer',
-                          }}
-                        >
-                          {p.enabled ? 'Enabled' : 'Disabled'}
-                        </button>
-
-                        {p.enabled && (
-                          <button
-                            onClick={() => handleSimulateCrash(p.manifest.id)}
-                            style={{
-                              padding: 'var(--space-1) var(--space-2)',
-                              borderRadius: 'var(--radius-sm)',
-                              border: '1px solid var(--color-border)',
-                              backgroundColor: 'transparent',
-                              color: 'var(--color-warning)',
-                              fontSize: 'var(--text-micro)',
-                              cursor: 'pointer',
-                            }}
+                      <div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                          <span
+                            className="ws-badge"
+                            data-variant={isRunning ? 'live' : isCrashed ? 'danger' : 'neutral'}
                           >
-                            Test Crash
+                            {p.status}
+                          </span>
+                          <span className="ws-tag">
+                            {p.manifest.category.replace('_', ' ').toUpperCase()}
+                          </span>
+                          <span style={{ fontSize: '10px', color: 'var(--ws-subtle)', fontFamily: 'var(--font-mono)' }}>
+                            v{p.manifest.version}
+                          </span>
+                          <span style={{ fontSize: '10px', color: 'var(--ws-muted)' }}>
+                            by {p.manifest.author}
+                          </span>
+                        </div>
+
+                        <div style={{ fontSize: '14px', fontWeight: 720, color: 'var(--ws-text)' }}>
+                          {p.manifest.name}
+                        </div>
+                        <div style={{ fontSize: '11px', color: 'var(--ws-muted)', marginTop: '3px' }}>
+                          {p.manifest.description}
+                        </div>
+
+                        {p.errorMessage && (
+                          <div style={{ marginTop: '6px', fontSize: '10.5px', color: 'var(--ws-danger)', fontFamily: 'var(--font-mono)' }}>
+                            Last Exception: {p.errorMessage}
+                          </div>
+                        )}
+
+                        <div style={{ display: 'flex', gap: '5px', marginTop: '8px' }}>
+                          {p.manifest.permissions.map((perm) => (
+                            <span key={perm} className="ws-tag">
+                              {perm}
+                            </span>
+                          ))}
+                          <span className="ws-tag" style={{ color: 'var(--ws-warning)' }}>
+                            In-Process Simulation
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Controls */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        {isCrashed ? (
+                          <button
+                            type="button"
+                            className="ws-secondary-action"
+                            style={{ height: '30px', fontSize: '10px' }}
+                            onClick={() => handleRestartPlugin(p.manifest.id)}
+                          >
+                            Restart
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            className="ws-secondary-action"
+                            style={{ height: '30px', fontSize: '10px' }}
+                            onClick={() => handleSimulateCrash(p.manifest.id)}
+                            title="Simulate unhandled exception to test error handling"
+                          >
+                            Test Error
                           </button>
                         )}
-                      </>
-                    )}
 
-                    <button
-                      onClick={() => handleUninstall(p.manifest.id, p.manifest.name)}
+                        <button
+                          type="button"
+                          className={p.enabled ? 'ws-secondary-action' : 'ws-primary-action'}
+                          style={{ height: '30px', fontSize: '10px' }}
+                          onClick={() => handleTogglePlugin(p.manifest.id, p.enabled)}
+                        >
+                          {p.enabled ? 'Disable' : 'Enable'}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        ) : (
+          <div>
+            {filteredCatalog.length === 0 ? (
+              <div className="ws-empty">
+                <div>
+                  <strong>No Catalog Items Found</strong>
+                  <p>Try clearing search or selecting a different plugin category.</p>
+                </div>
+              </div>
+            ) : (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: '12px' }}>
+                {filteredCatalog.map((item) => {
+                  const isInstalled = plugins.some((p) => p.manifest.id === item.manifest.id);
+
+                  return (
+                    <div
+                      key={item.manifest.id}
                       style={{
-                        padding: 'var(--space-1) var(--space-2)',
-                        borderRadius: 'var(--radius-sm)',
-                        border: '1px solid var(--color-border)',
-                        backgroundColor: 'transparent',
-                        color: 'var(--color-error)',
-                        fontSize: 'var(--text-small)',
-                        cursor: 'pointer',
+                        padding: '14px 16px',
+                        border: '1px solid var(--ws-line)',
+                        borderRadius: '7px',
+                        background: 'var(--ws-panel)',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        justifyContent: 'space-between',
+                        gap: '12px',
                       }}
                     >
-                      Uninstall
-                    </button>
-                  </div>
-                </div>
-              ))
+                      <div>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
+                          <span className="ws-tag">
+                            {item.manifest.category.replace('_', ' ').toUpperCase()}
+                          </span>
+                          <span
+                            className="ws-badge"
+                            data-variant={
+                              item.sourceStatus === 'Official'
+                                ? 'live'
+                                : item.sourceStatus === 'Verified Local'
+                                ? 'info'
+                                : 'neutral'
+                            }
+                          >
+                            {item.sourceStatus}
+                          </span>
+                        </div>
+
+                        <div style={{ fontSize: '13.5px', fontWeight: 720, color: 'var(--ws-text)' }}>
+                          {item.manifest.name}
+                        </div>
+                        <div style={{ fontSize: '10.5px', color: 'var(--ws-muted)', marginTop: '2px' }}>
+                          by {item.author} • v{item.manifest.version}
+                        </div>
+                        <div style={{ fontSize: '11px', color: 'var(--ws-text)', marginTop: '6px', lineHeight: 1.45 }}>
+                          {item.manifest.description}
+                        </div>
+
+                        <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', marginTop: '10px' }}>
+                          {item.tags.map((t) => (
+                            <span key={t} className="ws-tag">
+                              #{t}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '6px', borderTop: '1px solid var(--ws-line)', paddingTop: '10px' }}>
+                        {isInstalled ? (
+                          <button
+                            type="button"
+                            className="ws-secondary-action"
+                            style={{ height: '28px', fontSize: '10px', color: 'var(--ws-danger)' }}
+                            onClick={() => handleUninstall(item.manifest.id, item.manifest.name)}
+                          >
+                            Uninstall
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            className="ws-primary-action"
+                            style={{ height: '28px', fontSize: '10px' }}
+                            onClick={() => handleInstallFromRegistry(item.manifest.id, item.manifest.name)}
+                          >
+                            Install & Activate
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             )}
           </div>
         )}
-
-        {/* SUBTAB 2: PLUGIN REGISTRY & STORE */}
-        {activeSubTab === 'registry' && (
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))',
-              gap: 'var(--space-4)',
-            }}
-          >
-            {filteredRegistry.map((item) => {
-              const installed = pluginHost.getPlugins().some((p) => p.manifest.id === item.manifest.id);
-
-              return (
-                <div
-                  key={item.manifest.id}
-                  style={{
-                    backgroundColor: 'var(--color-surface)',
-                    border: '1px solid var(--color-border)',
-                    borderRadius: 'var(--radius-md)',
-                    padding: 'var(--space-4)',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    justifyContent: 'space-between',
-                  }}
-                >
-                  <div>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 'var(--space-1)' }}>
-                      <span
-                        style={{
-                          padding: '1px 6px',
-                          borderRadius: 'var(--radius-sm)',
-                          fontSize: 'var(--text-micro)',
-                          backgroundColor: 'var(--color-surface-elevated)',
-                          color: 'var(--color-info)',
-                          border: '1px solid var(--color-border)',
-                        }}
-                      >
-                        {item.manifest.category}
-                      </span>
-                      <span style={{ fontSize: 'var(--text-micro)', color: 'var(--color-text-muted)' }}>
-                        ★ {item.rating} ({item.downloadsCount} installs)
-                      </span>
-                    </div>
-
-                    <div style={{ fontSize: 'var(--text-body)', fontWeight: 700, marginBottom: '2px' }}>
-                      {item.manifest.name}
-                    </div>
-
-                    <div style={{ fontSize: 'var(--text-micro)', color: 'var(--color-text-secondary)', marginBottom: 'var(--space-2)' }}>
-                      by {item.author} | v{item.manifest.version}
-                    </div>
-
-                    <p style={{ fontSize: 'var(--text-small)', color: 'var(--color-text-secondary)', lineHeight: 1.5, margin: 0, marginBottom: 'var(--space-3)' }}>
-                      {item.manifest.description}
-                    </p>
-
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginBottom: 'var(--space-3)' }}>
-                      {item.tags.map((t) => (
-                        <span
-                          key={t}
-                          style={{
-                            padding: '1px 4px',
-                            borderRadius: 'var(--radius-sm)',
-                            fontSize: 'var(--text-micro)',
-                            backgroundColor: 'var(--color-bg)',
-                            color: 'var(--color-text-muted)',
-                          }}
-                        >
-                          #{t}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingTop: 'var(--space-2)', borderTop: '1px solid var(--color-border)' }}>
-                    <div style={{ fontSize: 'var(--text-micro)', color: 'var(--color-text-muted)' }}>
-                      Permissions: {item.manifest.permissions.join(', ')}
-                    </div>
-
-                    {installed ? (
-                      <button
-                        onClick={() => handleUninstall(item.manifest.id, item.manifest.name)}
-                        style={{
-                          padding: 'var(--space-1) var(--space-3)',
-                          borderRadius: 'var(--radius-sm)',
-                          border: '1px solid var(--color-border)',
-                          backgroundColor: 'var(--color-surface-elevated)',
-                          color: 'var(--color-error)',
-                          fontSize: 'var(--text-small)',
-                          cursor: 'pointer',
-                        }}
-                      >
-                        Uninstall
-                      </button>
-                    ) : (
-                      <button
-                        onClick={() => handleInstallFromRegistry(item.manifest.id, item.manifest.name)}
-                        style={{
-                          padding: 'var(--space-1) var(--space-3)',
-                          borderRadius: 'var(--radius-sm)',
-                          border: 'none',
-                          backgroundColor: 'var(--color-live)',
-                          color: 'var(--color-live-text)',
-                          fontWeight: 600,
-                          fontSize: 'var(--text-small)',
-                          cursor: 'pointer',
-                        }}
-                      >
-                        Install
-                      </button>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
       </div>
 
-      {/* Sideload Plugin Modal */}
+      {/* Sideload Modal Form */}
       {showImportModal && (
         <div
           style={{
             position: 'fixed',
             inset: 0,
-            backgroundColor: 'rgba(0,0,0,0.75)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
+            background: 'rgba(0,0,0,0.7)',
+            display: 'grid',
+            placeItems: 'center',
             zIndex: 1000,
           }}
         >
           <div
             style={{
-              width: 500,
-              backgroundColor: 'var(--color-surface)',
-              border: '1px solid var(--color-border)',
-              borderRadius: 'var(--radius-md)',
-              padding: 'var(--space-6)',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 'var(--space-4)',
+              width: 'min(520px, 92vw)',
+              background: 'var(--ws-panel)',
+              border: '1px solid var(--ws-line)',
+              borderRadius: '8px',
+              padding: '18px',
             }}
           >
-            <div>
-              <h3 style={{ margin: 0, fontSize: 'var(--text-h2)' }}>Sideload Custom Plugin Manifest</h3>
-              <p style={{ margin: 'var(--space-1) 0 0 0', fontSize: 'var(--text-small)', color: 'var(--color-text-secondary)' }}>
-                Paste the JSON manifest of your custom plugin to register and run it inside the failure-isolated host sandbox.
-              </p>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+              <h3 style={{ margin: 0, fontSize: '14px', fontWeight: 760 }}>Sideload Custom Plugin Manifest</h3>
+              <button
+                type="button"
+                className="ws-mini-action"
+                onClick={() => setShowImportModal(false)}
+              >
+                ✕
+              </button>
             </div>
 
-            <form onSubmit={handleImportCustom} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+            <form onSubmit={handleImportCustom}>
+              <p style={{ fontSize: '11px', color: 'var(--ws-muted)', margin: '0 0 10px 0' }}>
+                Paste JSON manifest definition compliant with Broadcst Plugin API.
+              </p>
               <textarea
-                rows={8}
+                className="ws-input"
+                style={{ width: '100%', height: '140px', fontFamily: 'var(--font-mono)', fontSize: '10px', padding: '8px' }}
+                placeholder='{ "id": "my-tool", "name": "My Custom Tool", "version": "1.0.0", "author": "Developer", "description": "Custom utility", "category": "utility", "permissions": [] }'
                 value={importJson}
                 onChange={(e) => setImportJson(e.target.value)}
-                placeholder='{ "id": "my-custom-plugin", "name": "My Plugin", "version": "1.0.0", "category": "Utility", "permissions": ["audio:read"], "author": "Studio Dev" }'
-                style={{
-                  width: '100%',
-                  padding: 'var(--space-2)',
-                  backgroundColor: 'var(--color-bg)',
-                  border: '1px solid var(--color-border)',
-                  borderRadius: 'var(--radius-sm)',
-                  color: 'var(--color-text-primary)',
-                  fontFamily: 'monospace',
-                  fontSize: 'var(--text-small)',
-                  boxSizing: 'border-box',
-                }}
+                required
               />
 
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 'var(--space-2)' }}>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '12px' }}>
                 <button
                   type="button"
+                  className="ws-secondary-action"
                   onClick={() => setShowImportModal(false)}
-                  style={{
-                    padding: 'var(--space-2) var(--space-4)',
-                    borderRadius: 'var(--radius-sm)',
-                    border: '1px solid var(--color-border)',
-                    backgroundColor: 'transparent',
-                    color: 'var(--color-text-primary)',
-                    cursor: 'pointer',
-                  }}
                 >
                   Cancel
                 </button>
-                <button
-                  type="submit"
-                  style={{
-                    padding: 'var(--space-2) var(--space-4)',
-                    borderRadius: 'var(--radius-sm)',
-                    border: 'none',
-                    backgroundColor: 'var(--color-live)',
-                    color: 'var(--color-live-text)',
-                    fontWeight: 600,
-                    cursor: 'pointer',
-                  }}
-                >
-                  Register & Enable
+                <button type="submit" className="ws-primary-action">
+                  Register Plugin
                 </button>
               </div>
             </form>
           </div>
         </div>
       )}
-    </div>
+
+      {toastMessage && <div className="ws-toast">{toastMessage}</div>}
+    </section>
   );
 };

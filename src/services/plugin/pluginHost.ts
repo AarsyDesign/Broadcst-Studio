@@ -26,21 +26,21 @@ class PluginHost {
         },
         status: 'STOPPED',
         enabled: false,
-        memoryEstimateKb: 124,
+        runtimeMode: 'in_process_prototype',
       },
       {
         manifest: {
           id: 'plugin-voice-leveler',
           name: 'Dynamic Voice Leveler',
           version: '2.0.1',
-          author: 'AudioDSP Labs',
+          author: 'Broadcast Audio Labs',
           description: 'Multiband voice broadcast leveling to ensure steady loudness and vocal presence.',
           category: 'audio_effect',
           permissions: ['audio_process'],
         },
         status: 'RUNNING',
         enabled: true,
-        memoryEstimateKb: 256,
+        runtimeMode: 'in_process_prototype',
       },
       {
         manifest: {
@@ -54,7 +54,7 @@ class PluginHost {
         },
         status: 'RUNNING',
         enabled: true,
-        memoryEstimateKb: 96,
+        runtimeMode: 'in_process_prototype',
       },
       {
         manifest: {
@@ -68,7 +68,7 @@ class PluginHost {
         },
         status: 'STOPPED',
         enabled: false,
-        memoryEstimateKb: 180,
+        runtimeMode: 'in_process_prototype',
       },
     ];
 
@@ -241,7 +241,7 @@ class PluginHost {
       manifest,
       status: 'STOPPED',
       enabled: false,
-      memoryEstimateKb: 128,
+      runtimeMode: 'in_process_prototype',
     };
     this.plugins.set(manifest.id, instance);
     this.notify();

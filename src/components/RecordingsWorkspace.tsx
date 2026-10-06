@@ -1,12 +1,16 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { recorderService, RecordedSession, RecorderState } from '../services/recorderService';
+import { transcriptStore } from '../services/transcription/transcriptStore';
 
 export const RecordingsWorkspace: React.FC = () => {
   const [recorderState, setRecorderState] = useState<RecorderState>(recorderService.getState());
   const [duration, setDuration] = useState<number>(recorderService.getCurrentDuration());
   const [sessions, setSessions] = useState<RecordedSession[]>(recorderService.getSessions());
-  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
+  const [currentTimeSec, setCurrentTimeSec] = useState<number>(0);
+  const [searchFilter, setSearchFilter] = useState<string>('');
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
@@ -18,7 +22,16 @@ export const RecordingsWorkspace: React.FC = () => {
 
     const unsubSessions = recorderService.onSessionsChange((sess) => {
       setSessions(sess);
+      if (!selectedSessionId && sess.length > 0) {
+        setSelectedSessionId(sess[0].id);
+      }
     });
+
+    // Auto-select first session if available
+    const existing = recorderService.getSessions();
+    if (existing.length > 0 && !selectedSessionId) {
+      setSelectedSessionId(existing[0].id);
+    }
 
     return () => {
       unsubState();
@@ -26,31 +39,106 @@ export const RecordingsWorkspace: React.FC = () => {
     };
   }, []);
 
+  const showToast = (msg: string) => {
+    setToastMessage(msg);
+    setTimeout(() => setToastMessage(null), 3000);
+  };
+
   const handleToggleRecord = async () => {
     if (recorderState === 'RECORDING') {
-      await recorderService.stopRecording();
+      const session = await recorderService.stopRecording();
+      if (session) {
+        setSelectedSessionId(session.id);
+        showToast(`Saved session recording: ${session.title}`);
+      }
     } else {
-      await recorderService.startRecording();
+      const started = await recorderService.startRecording();
+      if (started) {
+        showToast('Master audio recording started');
+      } else {
+        showToast('Unable to start recording. Verify audio engine destination.');
+      }
     }
   };
 
-  const handlePlaySession = (session: RecordedSession) => {
-    if (activeSessionId === session.id && isPlaying) {
-      audioRef.current?.pause();
-      setIsPlaying(false);
-      return;
-    }
+  const selectedSession = sessions.find((s) => s.id === selectedSessionId) || sessions[0] || null;
 
-    setActiveSessionId(session.id);
+  const handleSelectSession = (session: RecordedSession) => {
+    setSelectedSessionId(session.id);
+    setIsPlaying(false);
+    setCurrentTimeSec(0);
     if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.currentTime = 0;
       audioRef.current.src = session.blobUrl;
+    }
+  };
+
+  const handleTogglePlay = () => {
+    if (!audioRef.current || !selectedSession) return;
+
+    if (isPlaying) {
+      audioRef.current.pause();
+      setIsPlaying(false);
+    } else {
+      audioRef.current
+        .play()
+        .then(() => setIsPlaying(true))
+        .catch((err) => {
+          showToast(`Playback error: ${err.message}`);
+        });
+    }
+  };
+
+  const handleSeek = (timeSec: number) => {
+    if (!audioRef.current) return;
+    audioRef.current.currentTime = timeSec;
+    setCurrentTimeSec(timeSec);
+  };
+
+  const handleSeekToSegment = (startMs: number) => {
+    const timeSec = startMs / 1000;
+    handleSeek(timeSec);
+    if (audioRef.current && !isPlaying) {
       audioRef.current.play().then(() => setIsPlaying(true));
     }
   };
 
+  const handleExportAudio = () => {
+    if (!selectedSession) return;
+    const a = document.createElement('a');
+    a.href = selectedSession.blobUrl;
+    a.download = `${selectedSession.title.replace(/\s+/g, '_')}_${Date.now()}.webm`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    showToast(`Downloading master audio file`);
+  };
+
+  const handleExportTranscript = (format: 'txt' | 'srt' | 'json') => {
+    if (!selectedSession) return;
+    const segments = transcriptStore.getSegments();
+    if (segments.length === 0) {
+      showToast('No transcript segments recorded for this session');
+      return;
+    }
+
+    if (format === 'txt') {
+      const text = transcriptStore.exportAsText(true);
+      transcriptStore.downloadFile(text, `${selectedSession.title}_transcript.txt`, 'text/plain');
+    } else if (format === 'srt') {
+      const srt = transcriptStore.exportAsSrt();
+      transcriptStore.downloadFile(srt, `${selectedSession.title}_transcript.srt`, 'application/x-subrip');
+    } else {
+      const json = transcriptStore.exportAsJson();
+      transcriptStore.downloadFile(json, `${selectedSession.title}_transcript.json`, 'application/json');
+    }
+    showToast(`Exported transcript (${format.toUpperCase()})`);
+  };
+
   const formatDuration = (seconds: number) => {
     const m = Math.floor(seconds / 60);
-    const s = seconds % 60;
+    const s = Math.floor(seconds % 60);
     return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   };
 
@@ -61,180 +149,284 @@ export const RecordingsWorkspace: React.FC = () => {
     return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
   };
 
+  // Associated transcript segments for the session timeline
+  const allTranscriptSegments = transcriptStore.getSegments();
+
+  const filteredSessions = sessions.filter((s) =>
+    s.title.toLowerCase().includes(searchFilter.trim().toLowerCase())
+  );
+
   return (
-    <div
-      style={{
-        flex: 1,
-        display: 'flex',
-        flexDirection: 'column',
-        padding: 'var(--space-5)',
-        gap: 'var(--space-4)',
-        backgroundColor: 'var(--color-bg)',
-        overflowY: 'auto',
-      }}
-    >
-      <header
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          backgroundColor: 'var(--color-surface)',
-          padding: 'var(--space-3) var(--space-4)',
-          borderRadius: 'var(--radius-md)',
-          border: '1px solid var(--color-border)',
+    <section className="ws-workspace" style={{ display: 'grid', gridTemplateRows: 'auto minmax(0, 1fr)', gap: '14px', height: '100%' }}>
+      {/* Hidden native audio element */}
+      <audio
+        ref={audioRef}
+        onTimeUpdate={() => {
+          if (audioRef.current) {
+            setCurrentTimeSec(audioRef.current.currentTime);
+          }
         }}
-      >
+        onEnded={() => {
+          setIsPlaying(false);
+          setCurrentTimeSec(0);
+        }}
+      />
+
+      {/* Command & Control Bar */}
+      <div className="ws-command-row">
         <div>
-          <h1 style={{ fontSize: 'var(--text-h2)', fontWeight: 700, margin: 0 }}>
-            Broadcast Session Recordings
-          </h1>
-          <p style={{ fontSize: 'var(--text-small)', color: 'var(--color-text-secondary)', marginTop: '2px' }}>
-            Capture master output to disk with timestamped audio segments.
+          <div className="ws-kicker">Production / Archive</div>
+          <h1 className="ws-title">Broadcast Recordings & Transcripts</h1>
+          <p className="ws-subtitle">
+            Master output capture archive with timeline synchronization between recorded audio and live speech transcripts.
           </p>
         </div>
 
-        {/* Record Action */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
+        <div className="ws-transport">
           {recorderState === 'RECORDING' && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
-              <span
-                style={{
-                  width: '10px',
-                  height: '10px',
-                  borderRadius: '50%',
-                  backgroundColor: 'var(--color-error)',
-                  boxShadow: '0 0 8px var(--color-error)',
-                }}
-              />
-              <span className="font-mono" style={{ color: 'var(--color-text-primary)', fontWeight: 700 }}>
-                {formatDuration(duration)}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginRight: '6px' }}>
+              <span className="ws-badge" data-variant="live">
+                ● REC {formatDuration(duration)}
               </span>
             </div>
           )}
 
           <button
+            type="button"
+            className={recorderState === 'RECORDING' ? 'ws-secondary-action' : 'ws-primary-action'}
             onClick={handleToggleRecord}
             style={{
-              padding: 'var(--space-2) var(--space-5)',
-              borderRadius: 'var(--radius-sm)',
-              fontWeight: 700,
-              fontSize: 'var(--text-small)',
-              backgroundColor: recorderState === 'RECORDING' ? 'var(--color-error)' : 'var(--color-surface-elevated)',
-              color: recorderState === 'RECORDING' ? '#FFFFFF' : 'var(--color-text-primary)',
-              border: '1px solid var(--color-border)',
+              borderColor: recorderState === 'RECORDING' ? 'var(--ws-danger)' : undefined,
+              color: recorderState === 'RECORDING' ? 'var(--ws-danger)' : undefined,
             }}
           >
-            {recorderState === 'RECORDING' ? 'STOP RECORDING' : 'START RECORD'}
+            {recorderState === 'RECORDING' ? 'Stop Recording' : '● Capture Master Output'}
           </button>
         </div>
-      </header>
+      </div>
 
-      {/* Hidden Audio Element for Playback */}
-      <audio
-        ref={audioRef}
-        onEnded={() => setIsPlaying(false)}
-        onPause={() => setIsPlaying(false)}
-        onPlay={() => setIsPlaying(true)}
-      />
-
-      {/* Sessions List */}
-      <section style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-        <h2 style={{ fontSize: 'var(--text-body)', fontWeight: 600, margin: 0 }}>
-          Recorded Archives ({sessions.length})
-        </h2>
-
-        {sessions.length === 0 ? (
-          <div
-            style={{
-              padding: 'var(--space-8)',
-              backgroundColor: 'var(--color-surface)',
-              border: '1px solid var(--color-border)',
-              borderRadius: 'var(--radius-md)',
-              textAlign: 'center',
-              color: 'var(--color-text-muted)',
-              fontSize: 'var(--text-small)',
-            }}
-          >
-            No recorded broadcast archives found. Click "START RECORD" to begin capturing live output.
+      {/* Main Archive Workstation Split */}
+      <div className="ws-recordings-layout">
+        {/* Left Column: Archive Browser */}
+        <div
+          style={{
+            border: '1px solid var(--ws-line)',
+            borderRadius: '7px',
+            background: 'var(--ws-panel)',
+            display: 'flex',
+            flexDirection: 'column',
+            overflow: 'hidden',
+          }}
+        >
+          <div className="ws-section-head">
+            <h2>Session Archives ({sessions.length})</h2>
+            <span>Newest First</span>
           </div>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
-            {sessions.map((session) => {
-              const isCurrent = activeSessionId === session.id;
 
-              return (
-                <div
-                  key={session.id}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    padding: 'var(--space-3) var(--space-4)',
-                    backgroundColor: isCurrent ? 'var(--color-surface-elevated)' : 'var(--color-surface)',
-                    border: `1px solid ${isCurrent ? 'var(--color-live)' : 'var(--color-border)'}`,
-                    borderRadius: 'var(--radius-sm)',
-                  }}
-                >
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                    <span style={{ fontWeight: 600, color: 'var(--color-text-primary)', fontSize: 'var(--text-small)' }}>
-                      {session.title}
-                    </span>
-                    <span style={{ fontSize: 'var(--text-micro)', color: 'var(--color-text-muted)' }}>
-                      Captured on {new Date(session.startedAt).toLocaleString('id-ID')}
-                    </span>
-                  </div>
+          <div style={{ padding: '8px 10px', borderBottom: '1px solid var(--ws-line)' }}>
+            <input
+              type="text"
+              className="ws-input"
+              style={{ width: '100%', height: '28px' }}
+              placeholder="Search archive titles..."
+              value={searchFilter}
+              onChange={(e) => setSearchFilter(e.target.value)}
+            />
+          </div>
 
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-5)' }}>
-                    <span className="font-mono" style={{ fontSize: 'var(--text-small)', color: 'var(--color-text-secondary)' }}>
-                      {formatDuration(session.durationSeconds)}
-                    </span>
+          <div style={{ padding: '8px 10px', overflowY: 'auto', flex: 1 }}>
+            {filteredSessions.length === 0 ? (
+              <div className="ws-empty" style={{ minHeight: '140px' }}>
+                <div>
+                  <strong>No Session Recordings</strong>
+                  <p>Click "Capture Master Output" to record live broadcast sessions to disk.</p>
+                </div>
+              </div>
+            ) : (
+              filteredSessions.map((session) => {
+                const isSelected = selectedSession?.id === session.id;
+                return (
+                  <div
+                    key={session.id}
+                    className="ws-session-row"
+                    data-active={isSelected}
+                    onClick={() => handleSelectSession(session)}
+                  >
+                    <div>
+                      <div style={{ fontWeight: 650, fontSize: '12px', color: isSelected ? 'var(--ws-live)' : 'var(--ws-text)' }}>
+                        {session.title}
+                      </div>
+                      <div style={{ fontSize: '10px', color: 'var(--ws-muted)', marginTop: '2px' }}>
+                        {new Date(session.startedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} • {formatDuration(session.durationSeconds)} • {formatFileSize(session.fileSizeBytes)}
+                      </div>
+                    </div>
 
-                    <span className="font-mono" style={{ fontSize: 'var(--text-micro)', color: 'var(--color-text-muted)' }}>
-                      {formatFileSize(session.fileSizeBytes)}
-                    </span>
-
-                    <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
-                      <button
-                        onClick={() => handlePlaySession(session)}
-                        style={{
-                          padding: 'var(--space-1) var(--space-3)',
-                          backgroundColor: 'var(--color-surface-elevated)',
-                          border: '1px solid var(--color-border)',
-                          borderRadius: 'var(--radius-sm)',
-                          fontSize: 'var(--text-micro)',
-                          fontWeight: 600,
-                          color: isCurrent && isPlaying ? 'var(--color-live)' : 'var(--color-text-primary)',
-                        }}
-                      >
-                        {isCurrent && isPlaying ? 'PAUSE' : 'PLAY'}
-                      </button>
-
-                      <a
-                        href={session.blobUrl}
-                        download={`${session.title.replace(/\s+/g, '_')}.webm`}
-                        style={{
-                          textDecoration: 'none',
-                          padding: 'var(--space-1) var(--space-3)',
-                          backgroundColor: 'var(--color-surface-elevated)',
-                          border: '1px solid var(--color-border)',
-                          borderRadius: 'var(--radius-sm)',
-                          fontSize: 'var(--text-micro)',
-                          fontWeight: 600,
-                          color: 'var(--color-info)',
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                        }}
-                      >
-                        DOWNLOAD
-                      </a>
+                    <div style={{ textAlign: 'right' }}>
+                      <span className="ws-tag">SYNCED</span>
                     </div>
                   </div>
-                </div>
-              );
-            })}
+                );
+              })
+            )}
           </div>
-        )}
-      </section>
-    </div>
+        </div>
+
+        {/* Right Column: Player & Synced Transcript Timeline */}
+        <div
+          style={{
+            border: '1px solid var(--ws-line)',
+            borderRadius: '7px',
+            background: 'var(--ws-panel)',
+            display: 'flex',
+            flexDirection: 'column',
+            overflow: 'hidden',
+          }}
+        >
+          {selectedSession ? (
+            <>
+              {/* Header & Meta */}
+              <div
+                style={{
+                  padding: '14px 16px',
+                  borderBottom: '1px solid var(--ws-line)',
+                  background: 'var(--ws-panel-2)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: '12px',
+                }}
+              >
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span className="ws-badge" data-variant="live">MASTER TAPE</span>
+                    <span className="ws-tag">{selectedSession.mimeType || 'audio/webm'}</span>
+                  </div>
+                  <h3 style={{ margin: '6px 0 2px 0', fontSize: '16px', fontWeight: 760 }}>
+                    {selectedSession.title}
+                  </h3>
+                  <div style={{ fontSize: '11px', color: 'var(--ws-muted)' }}>
+                    Recorded on {new Date(selectedSession.startedAt).toLocaleString()} • Duration: {formatDuration(selectedSession.durationSeconds)}
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', gap: '6px' }}>
+                  <button type="button" className="ws-secondary-action" style={{ height: '30px', fontSize: '10px' }} onClick={handleExportAudio}>
+                    Download Audio
+                  </button>
+                  <button
+                    type="button"
+                    className="ws-secondary-action"
+                    style={{ height: '30px', fontSize: '10px' }}
+                    onClick={() => handleExportTranscript('srt')}
+                  >
+                    Export SRT
+                  </button>
+                </div>
+              </div>
+
+              {/* Interactive Player Console */}
+              <div
+                style={{
+                  padding: '12px 16px',
+                  borderBottom: '1px solid var(--ws-line)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '8px',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <button
+                    type="button"
+                    className="ws-primary-action"
+                    style={{ height: '32px', padding: '0 12px' }}
+                    onClick={handleTogglePlay}
+                  >
+                    {isPlaying ? 'Pause Tape' : '▶ Play Recording'}
+                  </button>
+
+                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--ws-muted)' }}>
+                    <strong style={{ color: 'var(--ws-text)' }}>{formatDuration(currentTimeSec)}</strong> / {formatDuration(selectedSession.durationSeconds)}
+                  </div>
+                </div>
+
+                {/* Seeker scrub bar */}
+                <input
+                  type="range"
+                  min="0"
+                  max={selectedSession.durationSeconds || 1}
+                  step="0.1"
+                  value={currentTimeSec}
+                  onChange={(e) => handleSeek(parseFloat(e.target.value))}
+                  style={{ width: '100%', accentColor: 'var(--ws-live)' }}
+                  aria-label="Seek recorded audio timeline"
+                />
+              </div>
+
+              {/* Synchronized Transcript Timeline */}
+              <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+                <div className="ws-section-head">
+                  <h2>Synchronized Transcript Timeline</h2>
+                  <span>Click segment to seek audio</span>
+                </div>
+
+                <div style={{ padding: '10px 14px', overflowY: 'auto', flex: 1 }}>
+                  {allTranscriptSegments.length === 0 ? (
+                    <div className="ws-empty" style={{ minHeight: '120px' }}>
+                      <div>
+                        <strong>No Speech Transcripts Linked</strong>
+                        <p>Start live speech transcription while recording to create timestamped editorial markers.</p>
+                      </div>
+                    </div>
+                  ) : (
+                    allTranscriptSegments.map((seg) => {
+                      const segStartSec = seg.startMs / 1000;
+                      const segEndSec = seg.endMs / 1000;
+                      const isCurrent = currentTimeSec >= segStartSec && currentTimeSec <= segEndSec;
+
+                      return (
+                        <div
+                          key={seg.id}
+                          className="ws-segment"
+                          data-current={isCurrent}
+                          onClick={() => handleSeekToSegment(seg.startMs)}
+                          style={{
+                            cursor: 'pointer',
+                            background: isCurrent ? 'color-mix(in srgb, var(--ws-live) 8%, transparent)' : undefined,
+                            borderRadius: '5px',
+                            padding: '6px 8px',
+                          }}
+                        >
+                          <span className="ws-segment-time">
+                            {formatDuration(segStartSec)}
+                          </span>
+                          <span
+                            className="ws-segment-text"
+                            style={{ color: isCurrent ? 'var(--ws-live)' : undefined }}
+                          >
+                            {seg.text}
+                          </span>
+                          <span className="ws-confidence">
+                            {seg.confidence ? `${Math.round(seg.confidence * 100)}%` : 'ok'}
+                          </span>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            </>
+          ) : (
+            <div className="ws-empty">
+              <div>
+                <strong>No Recording Selected</strong>
+                <p>Select a session recording from the archive list on the left to inspect audio and speech transcript timeline.</p>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {toastMessage && <div className="ws-toast">{toastMessage}</div>}
+    </section>
   );
 };

@@ -11,6 +11,7 @@ import { PluginsWorkspace } from './components/PluginsWorkspace';
 import { AutomationWorkspace } from './components/AutomationWorkspace';
 import { AIWorkspace } from './components/AIWorkspace';
 import { ScheduleWorkspace } from './components/ScheduleWorkspace';
+import { PlaylistWorkspace } from './components/PlaylistWorkspace';
 import { ipc } from './services/ipc';
 import { logger } from './services/logger';
 import { BroadcastStatus } from './types/broadcast';
@@ -173,14 +174,7 @@ export const App: React.FC = () => {
       case 'settings':
         return <SettingsWorkspace theme={theme} onSetTheme={setTheme} />;
       case 'playlist':
-        return (
-          <div className="ws-workspace">
-            <div className="ws-kicker">Production</div>
-            <h1 className="ws-title">Playlist</h1>
-            <p className="ws-subtitle">Playlist workspace is reserved for the production queue and source sequencing.</p>
-            <div className="ws-command-prompt">Playlist data model will be connected to the native audio graph in the next implementation slice.</div>
-          </div>
-        );
+        return <PlaylistWorkspace />;
     }
   })();
 

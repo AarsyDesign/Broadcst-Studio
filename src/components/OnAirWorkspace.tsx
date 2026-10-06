@@ -1,4 +1,5 @@
 import React, { useMemo } from 'react';
+import { shoutcastService } from '../services/shoutcastService';
 import { BroadcastStatus } from '../types/broadcast';
 import { StreamMetrics } from '../types/telemetry';
 import { TranscriptSegment, TranscriptStatus } from '../types/transcript';
@@ -59,9 +60,14 @@ export const OnAirWorkspace: React.FC<OnAirWorkspaceProps> = ({
         <div>
           <div className="ws-kicker">On Air / Master</div>
           <h1 className="ws-title">{status.config.stationName}</h1>
-          <p className="ws-subtitle">
-            One working surface for the live signal, SHOUTcast transport, and speech timeline.
-          </p>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px' }}>
+            <span className="ws-badge" data-variant={isLive ? 'live' : 'neutral'}>
+              {isLive ? '● ON AIR' : 'OFFLINE'}
+            </span>
+            <span style={{ fontSize: '11px', color: 'var(--ws-muted)' }}>
+              Now Playing: <strong style={{ color: 'var(--ws-text)' }}>{shoutcastService.getCurrentMetadata().title}</strong> — {shoutcastService.getCurrentMetadata().artist}
+            </span>
+          </div>
         </div>
 
         <div className="ws-transport">

@@ -5,8 +5,7 @@ import { logger } from '../logger';
 export interface RegistryPluginItem {
   manifest: PluginManifest;
   author: string;
-  downloadsCount: number;
-  rating: number;
+  sourceStatus: 'Verified Local' | 'Community Prototype' | 'Official';
   featured: boolean;
   tags: string[];
 }
@@ -14,18 +13,17 @@ export interface RegistryPluginItem {
 const REGISTRY_CATALOG: RegistryPluginItem[] = [
   {
     manifest: {
-      id: 'dsp-voice-processor',
+      id: 'broadcast-voice-processor',
       name: 'Broadcast Master Voice Processor',
       version: '1.2.0',
       description: '3-band dynamics compressor, expander/gate, and automatic gain leveler designed for broadcast microphone signals.',
       category: 'audio_effect',
-      author: 'AcousticDSP Labs',
+      author: 'Broadcast Audio Labs',
       permissions: ['audio_process'],
-      entryPoint: 'dsp_voice.js',
+      entryPoint: 'voice_processor.js',
     },
-    author: 'AcousticDSP Labs',
-    downloadsCount: 1420,
-    rating: 4.9,
+    author: 'Broadcast Audio Labs',
+    sourceStatus: 'Official',
     featured: true,
     tags: ['voice', 'compressor', 'dynamics', 'eq'],
   },
@@ -41,8 +39,7 @@ const REGISTRY_CATALOG: RegistryPluginItem[] = [
       entryPoint: 'lufs_radar.js',
     },
     author: 'Broadcast Norm Group',
-    downloadsCount: 980,
-    rating: 4.8,
+    sourceStatus: 'Official',
     featured: true,
     tags: ['loudness', 'lufs', 'meter', 'broadcast-standard'],
   },
@@ -51,17 +48,16 @@ const REGISTRY_CATALOG: RegistryPluginItem[] = [
       id: 'azuracast-metadata-bridge',
       name: 'AzuraCast & LibreTime Metadata Bridge',
       version: '2.0.1',
-      description: 'Bidirectional sync of track titles, album art, and real-time listener counts with AzuraCast radio servers.',
+      description: 'Bidirectional sync of track titles, album art, and server status with AzuraCast radio servers.',
       category: 'metadata',
       author: 'OpenRadio Project',
       permissions: ['metadata_read', 'metadata_write', 'network_out'],
       entryPoint: 'azuracast.js',
     },
     author: 'OpenRadio Project',
-    downloadsCount: 2150,
-    rating: 4.9,
+    sourceStatus: 'Community Prototype',
     featured: true,
-    tags: ['azuracast', 'libretime', 'metadata', 'listeners'],
+    tags: ['azuracast', 'libretime', 'metadata', 'automation'],
   },
   {
     manifest: {
@@ -75,8 +71,7 @@ const REGISTRY_CATALOG: RegistryPluginItem[] = [
       entryPoint: 'silence_guard.js',
     },
     author: 'Reliability Audio',
-    downloadsCount: 1650,
-    rating: 4.7,
+    sourceStatus: 'Verified Local',
     featured: false,
     tags: ['silence', 'failover', 'backup', 'automation'],
   },
@@ -92,10 +87,25 @@ const REGISTRY_CATALOG: RegistryPluginItem[] = [
       entryPoint: 'discord_webhook.js',
     },
     author: 'Community Bots',
-    downloadsCount: 820,
-    rating: 4.6,
+    sourceStatus: 'Community Prototype',
     featured: false,
     tags: ['discord', 'webhook', 'social', 'notifications'],
+  },
+  {
+    manifest: {
+      id: 'transcript-chapter-indexer',
+      name: 'Live Transcript Chapter Indexer',
+      version: '1.0.0',
+      description: 'Detects topic transitions in live speech transcript stream and marks chapter markers for session archives.',
+      category: 'transcript',
+      author: 'Editorial Audio Tools',
+      permissions: ['metadata_write'],
+      entryPoint: 'chapter_indexer.js',
+    },
+    author: 'Editorial Audio Tools',
+    sourceStatus: 'Verified Local',
+    featured: true,
+    tags: ['transcript', 'chapters', 'editorial', 'archive'],
   },
   {
     manifest: {
@@ -109,8 +119,7 @@ const REGISTRY_CATALOG: RegistryPluginItem[] = [
       entryPoint: 'eq_5band.js',
     },
     author: 'Studio Audio Tools',
-    downloadsCount: 1110,
-    rating: 4.8,
+    sourceStatus: 'Verified Local',
     featured: false,
     tags: ['eq', 'parametric', 'filter', 'studio'],
   },
@@ -126,8 +135,7 @@ const REGISTRY_CATALOG: RegistryPluginItem[] = [
       entryPoint: 'icecast_standby.js',
     },
     author: 'StreamEngine Systems',
-    downloadsCount: 740,
-    rating: 4.7,
+    sourceStatus: 'Official',
     featured: false,
     tags: ['icecast', 'redundancy', 'failover', 'output'],
   },
