@@ -21,6 +21,8 @@ pub fn run() {
             broadcast_reconnect,
             broadcast_get_status,
             audio_get_devices,
+            audio_start,
+            audio_stop,
             audio_set_gain,
             audio_set_fader,
             audio_mute,

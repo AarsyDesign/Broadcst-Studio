@@ -22,6 +22,8 @@ hound = "3.5"
 parking_lot = "0.12"
 crossbeam-channel = "0.5"
 byteorder = "1.5"
+rtrb = "0.4"
+rusty_mp3 = "1.0"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

@@ -15,6 +15,9 @@ export default defineConfig({
     port: 1420,
     strictPort: true,
     host: false,
+    watch: {
+      ignored: ['**/src-tauri/target/**', '**/target/**'],
+    },
   },
   // Prevent Vite from obscuring Rust errors
   clearScreen: false,

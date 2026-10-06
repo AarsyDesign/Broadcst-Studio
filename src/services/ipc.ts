@@ -66,7 +66,8 @@ class IPCService {
     if (this.isTauriAvailable) {
       try {
         const { invoke } = await import('@tauri-apps/api/core');
-        return await invoke(command, params as any);
+        const tauriCmd = command.includes('.') ? command.replace(/\./g, '_') : command;
+        return await invoke(tauriCmd, params as any);
       } catch (err) {
         logger.error('IPC', `Tauri invoke error on ${command}:`, { error: err });
         throw err;

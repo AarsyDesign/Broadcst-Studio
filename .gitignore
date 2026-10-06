@@ -12,6 +12,7 @@ build/
 # Rust / Tauri build artifacts
 target/
 src-tauri/target/
+src-tauri/gen/
 *.pdb
 
 # Environment variables
