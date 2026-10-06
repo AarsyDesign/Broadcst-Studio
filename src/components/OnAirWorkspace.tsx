@@ -226,7 +226,7 @@ export const OnAirWorkspace: React.FC<OnAirWorkspaceProps> = ({
               </div>
               <div className="ws-stream-field">
                 <span>Latency</span>
-                <strong>{metrics.networkLatencyMs} ms</strong>
+                <strong>{metrics.networkLatencyMs > 0 ? `${metrics.networkLatencyMs} ms` : '—'}</strong>
               </div>
               <div className="ws-stream-field">
                 <span>Dropped</span>

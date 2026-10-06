@@ -262,4 +262,49 @@ mod tests {
             total_packets
         );
     }
+
+    #[test]
+    fn test_mp3_encoder_roundtrip_decoding() {
+        use rusty_mp3::Mp3Decoder;
+
+        let mut enc = NativeMp3Encoder::new(2, 48000, 128);
+        // Feed 4800 stereo frames (100ms at 48kHz = 9600 samples)
+        let pcm_input = vec![0.25f32; 9600];
+        let mut mp3_bytes = Vec::new();
+
+        let packets = enc.encode(&pcm_input).unwrap();
+        for p in packets {
+            mp3_bytes.extend_from_slice(&p);
+        }
+        let flushed = enc.flush().unwrap();
+        for p in flushed {
+            mp3_bytes.extend_from_slice(&p);
+        }
+
+        assert!(!mp3_bytes.is_empty(), "MP3 bitstream should contain bytes");
+
+        // Validate bitstream using Mp3Decoder
+        let mut decoder = Mp3Decoder::new();
+        decoder.push(&mp3_bytes);
+        decoder.flush();
+
+        let mut decoded_frames = 0;
+        let mut total_decoded_samples = 0;
+        while let Ok(audio) = decoder.next_frame() {
+            assert_eq!(
+                audio.sample_rate, 48000,
+                "Decoded sample rate must match 48000"
+            );
+            assert_eq!(audio.channels, 2, "Decoded channels must be stereo");
+            assert!(!audio.samples.is_empty());
+            decoded_frames += 1;
+            total_decoded_samples += audio.samples.len();
+        }
+
+        assert!(
+            decoded_frames > 0,
+            "Decoder must successfully decode at least one MP3 frame from encoded stream"
+        );
+        assert!(total_decoded_samples > 0);
+    }
 }

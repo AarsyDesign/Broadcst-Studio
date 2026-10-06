@@ -221,6 +221,42 @@ impl MasterRecorder {
             0.0
         }
     }
+
+    pub fn get_status(&self) -> RecordingResult {
+        let total_samples = self.samples_written.load(Ordering::Relaxed);
+        let duration_seconds = if self.channels > 0 && self.sample_rate > 0 {
+            (total_samples / self.channels as u64) as f32 / self.sample_rate as f32
+        } else {
+            0.0
+        };
+
+        let file_path = self
+            .current_filepath
+            .lock()
+            .as_ref()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_default();
+
+        let session_id = self.current_session_id.lock().clone().unwrap_or_default();
+
+        let dropped_frames = self
+            .dropped_frames_counter
+            .lock()
+            .as_ref()
+            .map(|c| c.load(Ordering::Relaxed))
+            .unwrap_or(0);
+
+        let write_errors = self.write_errors.load(Ordering::Relaxed);
+
+        RecordingResult {
+            id: session_id,
+            file_path,
+            duration_seconds,
+            samples_written: total_samples,
+            dropped_frames,
+            write_errors,
+        }
+    }
 }
 
 #[cfg(test)]

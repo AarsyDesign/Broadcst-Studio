@@ -255,6 +255,19 @@ impl MasterBus {
     }
 }
 
+/// Real-time safe summation of multiple channel buffers into a master accumulator buffer.
+/// Clears the master accumulator and sums active channel slices.
+#[inline]
+pub fn sum_channel_buffers(channels: &[&[f32]], master_output: &mut [f32]) {
+    master_output.fill(0.0);
+    for ch_buf in channels {
+        let len = ch_buf.len().min(master_output.len());
+        for i in 0..len {
+            master_output[i] += ch_buf[i];
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -269,15 +282,32 @@ mod tests {
         ch.set_gain_db(6.0206); // +6 dB ~ 2.0x linear
         assert!((ch.compute_linear_gain() - 2.0).abs() < 1e-2);
 
-        ch.set_fader(0.5); // fader^2 = 0.25
+        ch.set_gain_db(-6.0206); // -6 dB ~ 0.5x linear
         assert!((ch.compute_linear_gain() - 0.5).abs() < 1e-2);
+
+        ch.set_fader(0.5); // fader^2 = 0.25
+        assert!((ch.compute_linear_gain() - 0.125).abs() < 1e-2);
 
         ch.set_mute(true);
         assert_eq!(ch.compute_linear_gain(), 0.0);
     }
 
     #[test]
-    fn test_master_limiter() {
+    fn test_summation_multiple_channels() {
+        let ch1 = [0.25f32, 0.5f32, -0.25f32];
+        let ch2 = [0.15f32, -0.2f32, 0.45f32];
+        let ch3_silence = [0.0f32, 0.0f32, 0.0f32];
+
+        let mut master = [0.0f32; 3];
+        sum_channel_buffers(&[&ch1, &ch2, &ch3_silence], &mut master);
+
+        assert!((master[0] - 0.40).abs() < 1e-5);
+        assert!((master[1] - 0.30).abs() < 1e-5);
+        assert!((master[2] - 0.20).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_master_fader_and_limiter() {
         let master = MasterBus::new();
         master.set_fader(1.0);
         master.set_ceiling_db(-0.5); // ~0.944 linear
@@ -297,10 +327,16 @@ mod tests {
         );
         assert_eq!(samples[2], 0.5);
         assert!(master.get_peak_db() > -90.0);
+
+        // Test master fader attenuation
+        master.set_fader(0.5); // (0.5)^2 = 0.25 gain
+        let mut attenuated = [1.0, 1.0];
+        master.process_master(&mut attenuated);
+        assert!((attenuated[0] - 0.25).abs() < 1e-3);
     }
 
     #[test]
-    fn test_channel_meters() {
+    fn test_channel_meters_and_silence() {
         let ch = ChannelStrip::new("mic", "Microphone", true);
         // Sine wave peak 1.0, RMS ~0.707 (-3 dB)
         let samples = [1.0, -1.0, 0.5, -0.5];
@@ -311,7 +347,12 @@ mod tests {
         // RMS of sqrt((1 + 1 + 0.25 + 0.25) / 4) = sqrt(2.5 / 4) = sqrt(0.625) ~ 0.79 -> ~-2.04 dBFS
         assert!(ch.get_rms_db() < 0.0 && ch.get_rms_db() > -10.0);
 
+        // Test silence
         ch.update_meters(&[]);
+        assert_eq!(ch.get_peak_db(), -90.0);
+        assert_eq!(ch.get_rms_db(), -90.0);
+
+        ch.update_meters(&[0.0, 0.0, 0.0]);
         assert_eq!(ch.get_peak_db(), -90.0);
         assert_eq!(ch.get_rms_db(), -90.0);
     }

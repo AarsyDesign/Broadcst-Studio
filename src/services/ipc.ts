@@ -183,9 +183,9 @@ class IPCService {
           stream: shoutcastService.getMetrics(),
           audio: await this.handleCoreCommand('audio.get_metrics'),
           system: {
-            cpuUsagePercent: 2.8,
-            memoryUsageMb: 88.0,
-            audioThreadTimeMs: 0.9,
+            cpuUsagePercent: 0.0, // Honest unmeasured status (no fake numbers)
+            memoryUsageMb: 0.0,
+            audioThreadTimeMs: 0.0,
           },
         };
         return snapshot;

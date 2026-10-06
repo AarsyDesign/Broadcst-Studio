@@ -1,16 +1,33 @@
-//! SHOUTcast / ICY Source Client Subsystem
+//! SHOUTcast Source Protocol Implementation
 //!
-//! # Protocol Specification & Supported Standard
-//! Broadcst Studio implements the standard SHOUTcast v1 / ICY Source Protocol:
-//! 1. Connects to the streaming server over persistent TCP.
-//! 2. Transmits the ICY source handshake with HTTP Basic authentication (`Authorization: Basic <base64>`)
-//!    and broadcast headers (`ice-name`, `ice-genre`, `ice-bitrate`, `ice-audio-info`).
-//! 3. Awaits and validates the server response (`HTTP/1.0 200 OK`, `ICY 200 OK`, or legacy `OK2`).
-//! 4. Maintains an active, persistent TCP connection throughout the broadcast session.
-//! 5. Continuously transmits encoded MP3 frames from the bounded network queue.
-//! 6. Propagates metadata changes via the standard SHOUTcast admin HTTP interface.
-//! 7. Features an exponential backoff reconnect loop that is immediately aborted on manual stop.
-//! 8. Exposes honest, measured telemetry derived solely from socket I/O.
+//! # Protocol Specification & Authoritative DNAS Target
+//! Broadcst Studio implements the authoritative **SHOUTcast Source Protocol (v1 / ICY wire protocol)**,
+//! supported universally by SHOUTcast DNAS 1.x and DNAS 2.x (in legacy source mode), as well as
+//! standard broadcasting platforms (Centova Cast, RadioToolbox, sc_serv):
+//!
+//! 1. **Transport Layer**: Persistent TCP connection established to the DNAS source port.
+//! 2. **Authentication**: Client sends the plain-text password terminated with CRLF:
+//!    - Single stream: `<PASSWORD>\r\n`
+//!    - Multi-stream DNAS 2 targeting: `<PASSWORD>:#<STREAM_ID>\r\n`
+//!    *(Note: Icecast HTTP `SOURCE` method and `Authorization: Basic` are NOT SHOUTcast protocols and are not used).*
+//! 3. **Server Acceptance**: Server validates credentials and responds with `OK2\r\n` (and optional `icy-caps`).
+//!    Only upon receiving `OK2` does the client transition from `AUTHENTICATING` to `CONNECTED`.
+//! 4. **Stream Headers**: Immediately following `OK2`, client transmits ICY broadcast configuration:
+//!    ```text
+//!    icy-name:<station_name>\r\n
+//!    icy-genre:<genre>\r\n
+//!    icy-url:<url>\r\n
+//!    icy-pub:<0 or 1>\r\n
+//!    icy-br:<bitrate>\r\n
+//!    \r\n
+//!    ```
+//! 5. **Audio Payload**: Immediately following the double CRLF, client streams continuous raw MP3 audio frames.
+//! 6. **Dynamic Metadata Updates**: Stream title/artist updates are dispatched off the audio thread via the
+//!    standard DNAS admin interface:
+//!    `GET /admin.cgi?mode=updinfo&pass=<PASSWORD>&song=<SONG>&sid=<STREAM_ID> HTTP/1.0\r\n\r\n`
+//! 7. **Reliability & State Machine**: State transitions strictly follow:
+//!    `OFFLINE` -> `CONNECTING` -> `AUTHENTICATING` -> `CONNECTED` -> `RECONNECTING` -> `ERROR`
+//!    Features exponential backoff reconnects that are immediately terminated upon manual user `STOP`.
 
 use crate::models::{
     BroadcastState, BroadcastStatus, ShoutcastConfig, StreamMetrics, TrackMetadata,
@@ -24,80 +41,76 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::Notify;
 
-pub fn encode_base64(input: &[u8]) -> String {
-    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::new();
-    let mut i = 0;
-    while i < input.len() {
-        let b0 = input[i];
-        let b1 = if i + 1 < input.len() { input[i + 1] } else { 0 };
-        let b2 = if i + 2 < input.len() { input[i + 2] } else { 0 };
-
-        let idx0 = (b0 >> 2) as usize;
-        let idx1 = (((b0 & 0x03) << 4) | (b1 >> 4)) as usize;
-        let idx2 = (((b1 & 0x0F) << 2) | (b2 >> 6)) as usize;
-        let idx3 = (b2 & 0x3F) as usize;
-
-        out.push(TABLE[idx0] as char);
-        out.push(TABLE[idx1] as char);
-        if i + 1 < input.len() {
-            out.push(TABLE[idx2] as char);
-        } else {
-            out.push('=');
-        }
-        if i + 2 < input.len() {
-            out.push(TABLE[idx3] as char);
-        } else {
-            out.push('=');
-        }
-        i += 3;
+/// Format the initial SHOUTcast authentication line.
+/// In standard DNAS 1: `<PASSWORD>\r\n`
+/// In multi-stream DNAS 2: `<PASSWORD>:#<SID>\r\n`
+pub fn format_auth_line(cfg: &ShoutcastConfig) -> String {
+    let pass = cfg.password.as_deref().unwrap_or_default();
+    if cfg.stream_id > 1 {
+        format!("{}:#{}\r\n", pass, cfg.stream_id)
+    } else {
+        format!("{}\r\n", pass)
     }
-    out
 }
 
-pub fn format_source_handshake(cfg: &ShoutcastConfig) -> String {
-    let mount = cfg.mount_point.as_deref().unwrap_or("/stream");
-    let mount = if mount.starts_with('/') {
-        mount.to_string()
-    } else {
-        format!("/{}", mount)
-    };
-
-    let pass = cfg.password.as_deref().unwrap_or_default();
-    let auth_str = format!("source:{}", pass);
-    let auth_base64 = encode_base64(auth_str.as_bytes());
-
+/// Format the ICY stream headers sent after server responds with `OK2`.
+pub fn format_icy_stream_headers(cfg: &ShoutcastConfig) -> String {
     format!(
-        "SOURCE {} HTTP/1.0\r\n\
-        Authorization: Basic {}\r\n\
-        ice-name: {}\r\n\
-        ice-genre: {}\r\n\
-        ice-bitrate: {}\r\n\
-        ice-public: {}\r\n\
-        ice-audio-info: channels=2;samplerate=48000;bitrate={}\r\n\
+        "icy-name:{}\r\n\
+        icy-genre:{}\r\n\
+        icy-url:http://{}\r\n\
+        icy-pub:{}\r\n\
+        icy-br:{}\r\n\
         \r\n",
-        mount,
-        auth_base64,
         cfg.station_name,
-        cfg.genre.as_deref().unwrap_or("Speech / Music"),
-        cfg.bitrate,
+        cfg.genre.as_deref().unwrap_or("Broadcast / Speech"),
+        cfg.server,
         if cfg.is_public { 1 } else { 0 },
         cfg.bitrate
     )
 }
 
-pub fn validate_handshake_response(response: &str) -> Result<(), String> {
-    let first_line = response.lines().next().unwrap_or("").trim();
-    if first_line.contains("200") || first_line == "OK2" || first_line.starts_with("ICY 200") {
+/// Validate the SHOUTcast DNAS handshake response.
+/// Acceptance requires the presence of `"OK2"`.
+pub fn validate_dnas_response(response: &str) -> Result<(), String> {
+    let trimmed = response.trim();
+    if trimmed.contains("OK2") {
         Ok(())
-    } else if first_line.contains("401") {
-        Err("Authentication failed: 401 Unauthorized (invalid source password)".to_string())
-    } else if first_line.contains("403") {
-        Err("Access forbidden: 403 Forbidden".to_string())
-    } else if first_line.to_lowercase().contains("invalid") {
-        Err(format!("Authentication rejected: {}", first_line))
+    } else if trimmed.to_lowercase().contains("invalid") {
+        Err(format!(
+            "SHOUTcast DNAS authentication rejected: {}",
+            trimmed
+        ))
+    } else if trimmed.is_empty() {
+        Err("SHOUTcast DNAS closed connection with empty response".to_string())
     } else {
-        Err(format!("Server handshake failed: {}", first_line))
+        Err(format!(
+            "SHOUTcast DNAS handshake failed (expected OK2, received: '{}')",
+            trimmed
+        ))
+    }
+}
+
+/// Format the dynamic metadata update HTTP request for `/admin.cgi?mode=updinfo`.
+pub fn format_metadata_update_request(cfg: &ShoutcastConfig, meta: &TrackMetadata) -> String {
+    let pass = cfg.password.as_deref().unwrap_or_default();
+    let song = format!("{} - {}", meta.artist, meta.title);
+    let encoded_song = urlencoding::encode(&song);
+
+    if cfg.stream_id > 1 {
+        format!(
+            "GET /admin.cgi?mode=updinfo&pass={}&song={}&sid={} HTTP/1.0\r\n\
+            User-Agent: Broadcst-Studio/0.1.0\r\n\
+            \r\n",
+            pass, encoded_song, cfg.stream_id
+        )
+    } else {
+        format!(
+            "GET /admin.cgi?mode=updinfo&pass={}&song={} HTTP/1.0\r\n\
+            User-Agent: Broadcst-Studio/0.1.0\r\n\
+            \r\n",
+            pass, encoded_song
+        )
     }
 }
 
@@ -115,13 +128,20 @@ pub struct ShoutcastClient {
     last_connected_at: RwLock<Option<String>>,
     last_error_message: RwLock<Option<String>>,
 
-    // Measured bitrate tracking (bytes in current window)
+    // Measured upload bitrate tracking
     window_bytes: Arc<AtomicU64>,
     measured_kbps: Arc<RwLock<f32>>,
 
-    // Worker notification
+    // Queue depth tracking for honest buffer health ratio
+    network_queue_depth: Arc<AtomicU64>,
+    network_queue_capacity: usize,
+
+    // Worker signals
     metadata_updated: Arc<Notify>,
     dropped_network_packets: Arc<AtomicU64>,
+    metadata_delivered: Arc<AtomicBool>,
+    metadata_error: Arc<RwLock<Option<String>>>,
+    transport_handle: Arc<parking_lot::Mutex<Option<tokio::task::JoinHandle<()>>>>,
 }
 
 impl ShoutcastClient {
@@ -145,8 +165,13 @@ impl ShoutcastClient {
             last_error_message: RwLock::new(None),
             window_bytes: Arc::new(AtomicU64::new(0)),
             measured_kbps: Arc::new(RwLock::new(0.0)),
+            network_queue_depth: Arc::new(AtomicU64::new(0)),
+            network_queue_capacity: 256,
             metadata_updated: Arc::new(Notify::new()),
             dropped_network_packets: Arc::new(AtomicU64::new(0)),
+            metadata_delivered: Arc::new(AtomicBool::new(false)),
+            metadata_error: Arc::new(RwLock::new(None)),
+            transport_handle: Arc::new(parking_lot::Mutex::new(None)),
         })
     }
 
@@ -155,13 +180,11 @@ impl ShoutcastClient {
     }
 
     pub fn set_dropped_counter(&self, counter: Arc<AtomicU64>) {
-        // Wire dropped packets from encoder worker
         self.dropped_network_packets
             .store(counter.load(Ordering::Relaxed), Ordering::Relaxed);
     }
 
-    /// Start persistent broadcast transport.
-    /// Manages socket connection, handshake verification, streaming loop, and exponential backoff reconnects.
+    /// Connect to SHOUTcast DNAS server, perform handshake, and start background streaming worker.
     pub async fn start(
         self: &Arc<Self>,
         network_rx: Receiver<Vec<u8>>,
@@ -172,21 +195,16 @@ impl ShoutcastClient {
 
         let self_clone = self.clone();
 
-        // Perform initial connection attempt synchronously to return immediate status to caller
-        let initial_connect_res = self_clone.connect_and_handshake().await;
-
-        match initial_connect_res {
-            Ok(initial_stream) => {
+        match self_clone.connect_and_handshake().await {
+            Ok(stream) => {
                 *self.state.write() = BroadcastState::Connected;
                 *self.last_connected_at.write() = Some(chrono::Utc::now().to_rfc3339());
 
-                // Spawn long-running transport worker loop
                 let worker_self = self.clone();
-                tokio::spawn(async move {
-                    worker_self
-                        .run_transport_loop(initial_stream, network_rx)
-                        .await;
+                let handle = tokio::spawn(async move {
+                    worker_self.run_transport_loop(stream, network_rx).await;
                 });
+                *self.transport_handle.lock() = Some(handle);
 
                 Ok(self.get_status())
             }
@@ -198,12 +216,15 @@ impl ShoutcastClient {
         }
     }
 
-    /// Stop the broadcast session. Immediately cancels any reconnect loop and terminates transport.
+    /// Stop broadcasting immediately. Cancels any active reconnect loop and terminates transport worker.
     pub async fn stop(&self) -> BroadcastStatus {
         self.is_manual_stop.store(true, Ordering::SeqCst);
         self.is_running.store(false, Ordering::SeqCst);
-        *self.state.write() = BroadcastState::Offline;
         self.metadata_updated.notify_waiters();
+        if let Some(handle) = self.transport_handle.lock().take() {
+            handle.abort();
+        }
+        *self.state.write() = BroadcastState::Offline;
         self.get_status()
     }
 
@@ -222,80 +243,100 @@ impl ShoutcastClient {
         self.metadata_updated.notify_waiters();
     }
 
-    /// Internal helper: Connects TCP socket and validates server handshake response.
+    /// Connect TCP socket, transmit password line, read and validate `OK2` response,
+    /// then transmit the ICY headers.
     async fn connect_and_handshake(&self) -> Result<TcpStream, String> {
         *self.state.write() = BroadcastState::Connecting;
         let cfg = self.config.read().clone();
         let target_addr = format!("{}:{}", cfg.server, cfg.port);
 
-        let mut stream = TcpStream::connect(&target_addr)
-            .await
-            .map_err(|e| format!("Failed to connect to {}: {}", target_addr, e))?;
+        let mut stream = TcpStream::connect(&target_addr).await.map_err(|e| {
+            format!(
+                "Failed to connect to SHOUTcast DNAS at {}: {}",
+                target_addr, e
+            )
+        })?;
 
         *self.state.write() = BroadcastState::Authenticating;
 
-        let handshake = format_source_handshake(&cfg);
+        // Step 1: Send SHOUTcast password line
+        let auth_line = format_auth_line(&cfg);
         stream
-            .write_all(handshake.as_bytes())
+            .write_all(auth_line.as_bytes())
             .await
-            .map_err(|e| format!("Handshake write failed: {}", e))?;
+            .map_err(|e| format!("Failed to write authentication line: {}", e))?;
 
-        // Read server response (up to 1024 bytes)
-        let mut resp_buf = [0u8; 1024];
+        // Step 2: Read DNAS server response (expecting "OK2") with 5s timeout
+        let mut resp_buf = [0u8; 512];
         let n = tokio::time::timeout(Duration::from_secs(5), stream.read(&mut resp_buf))
             .await
-            .map_err(|_| "Server handshake timed out after 5 seconds".to_string())?
-            .map_err(|e| format!("Failed to read handshake response: {}", e))?;
+            .map_err(|_| "DNAS server response timed out after 5 seconds".to_string())?
+            .map_err(|e| format!("Failed to read DNAS server response: {}", e))?;
 
         if n == 0 {
-            return Err("Server closed connection during authentication".to_string());
+            return Err("DNAS server closed connection during authentication".to_string());
         }
 
         let resp_str = String::from_utf8_lossy(&resp_buf[..n]);
-        validate_handshake_response(&resp_str)?;
+        validate_dnas_response(&resp_str)?;
+
+        // Step 3: Send ICY stream headers
+        let icy_headers = format_icy_stream_headers(&cfg);
+        stream
+            .write_all(icy_headers.as_bytes())
+            .await
+            .map_err(|e| format!("Failed to write ICY stream headers: {}", e))?;
 
         Ok(stream)
     }
 
-    /// Background transport worker maintaining persistent connection,
-    /// streaming encoded MP3 bytes, handling metadata updates, and executing exponential backoff reconnects.
+    /// Dedicated streaming loop maintaining persistent connection,
+    /// writing encoded MP3 bytes, handling metadata updates, and executing backoff reconnects.
     async fn run_transport_loop(
         self: Arc<Self>,
         mut stream: TcpStream,
         network_rx: Receiver<Vec<u8>>,
     ) {
         let mut last_kbps_calc = Instant::now();
+        let mut reconnect_attempts: u32 = 0;
 
         while self.is_running.load(Ordering::Relaxed) {
             tokio::select! {
-                // Send metadata update if triggered
+                // Metadata update triggered
                 _ = self.metadata_updated.notified() => {
                     if self.is_running.load(Ordering::Relaxed) {
                         self.push_metadata_update().await;
                     }
                 }
 
-                // Stream audio chunk or handle backoff
+                // Streaming audio packets
                 _ = tokio::time::sleep(Duration::from_millis(5)) => {
-                    // Drain available MP3 packets from network queue
-                    let mut wrote_any = false;
+                    self.network_queue_depth.store(network_rx.len() as u64, Ordering::Relaxed);
+
+                    let mut socket_failed = false;
                     while let Ok(packet) = network_rx.try_recv() {
-                        match stream.write_all(&packet).await {
-                            Ok(()) => {
+                        let write_fut = stream.write_all(&packet);
+                        match tokio::time::timeout(Duration::from_secs(5), write_fut).await {
+                            Ok(Ok(())) => {
                                 let len = packet.len() as u64;
                                 self.bytes_sent.fetch_add(len, Ordering::Relaxed);
                                 self.window_bytes.fetch_add(len, Ordering::Relaxed);
-                                wrote_any = true;
+                                reconnect_attempts = 0; // Successful write resets backoff
                             }
-                            Err(e) => {
-                                // Connection severed!
-                                *self.last_error_message.write() = Some(format!("Socket write error: {}", e));
+                            Ok(Err(e)) => {
+                                *self.last_error_message.write() = Some(format!("TCP socket write failure: {}", e));
+                                socket_failed = true;
+                                break;
+                            }
+                            Err(_) => {
+                                *self.last_error_message.write() = Some("TCP socket write timed out after 5s (broken connection)".to_string());
+                                socket_failed = true;
                                 break;
                             }
                         }
                     }
 
-                    // Update measured bitrate calculation every 1 second
+                    // Rolling 1-second upload bitrate calculation
                     if last_kbps_calc.elapsed() >= Duration::from_secs(1) {
                         let bytes = self.window_bytes.swap(0, Ordering::Relaxed);
                         let elapsed_secs = last_kbps_calc.elapsed().as_secs_f32();
@@ -305,41 +346,99 @@ impl ShoutcastClient {
                         last_kbps_calc = Instant::now();
                     }
 
-                    // Check if socket is still alive; if write failed, attempt reconnect
-                    if !wrote_any && !self.is_manual_stop.load(Ordering::Relaxed) {
-                        // Check socket health with a 0-byte write/peek or check if stream errored
+                    // Handle broken socket / disconnect
+                    if socket_failed {
+                        if self.is_manual_stop.load(Ordering::Relaxed) {
+                            break;
+                        }
+
+                        *self.state.write() = BroadcastState::Reconnecting;
+                        self.reconnect_count.fetch_add(1, Ordering::Relaxed);
+                        reconnect_attempts += 1;
+
+                        // Exponential backoff: 1s, 2s, 4s, 8s, up to 30s
+                        let backoff_secs = (1u64 << reconnect_attempts.min(5)).min(30);
+                        tokio::time::sleep(Duration::from_secs(backoff_secs)).await;
+
+                        if self.is_manual_stop.load(Ordering::Relaxed) {
+                            break;
+                        }
+
+                        match self.connect_and_handshake().await {
+                            Ok(new_stream) => {
+                                stream = new_stream;
+                                *self.state.write() = BroadcastState::Connected;
+                                *self.last_connected_at.write() = Some(chrono::Utc::now().to_rfc3339());
+                            }
+                            Err(e) => {
+                                *self.last_error_message.write() = Some(format!("Reconnect attempt failed: {}", e));
+                            }
+                        }
                     }
                 }
             }
 
-            // If manual stop was invoked, exit immediately without reconnecting
             if self.is_manual_stop.load(Ordering::Relaxed) {
                 break;
             }
         }
 
-        // Clean shutdown: flush socket
         let _ = stream.shutdown().await;
         *self.state.write() = BroadcastState::Offline;
     }
 
-    /// Real metadata propagation: Sends HTTP metadata update to SHOUTcast/Icecast admin CGI endpoint.
+    /// Send dynamic metadata update to SHOUTcast DNAS `/admin.cgi?mode=updinfo` endpoint
+    /// with delivery verification and response handling.
     async fn push_metadata_update(&self) {
         let cfg = self.config.read().clone();
         let meta = self.current_metadata.read().clone();
-        let song = format!("{} - {}", meta.artist, meta.title);
-        let encoded_song = urlencoding::encode(&song);
-
-        let pass = cfg.password.as_deref().unwrap_or_default();
-        let admin_req = format!(
-            "GET /admin.cgi?mode=updinfo&pass={}&song={} HTTP/1.0\r\nUser-Agent: Broadcst-Studio/0.1.0\r\n\r\n",
-            pass,
-            encoded_song
-        );
+        let req = format_metadata_update_request(&cfg, &meta);
 
         let target_addr = format!("{}:{}", cfg.server, cfg.port);
-        if let Ok(mut admin_stream) = TcpStream::connect(&target_addr).await {
-            let _ = admin_stream.write_all(admin_req.as_bytes()).await;
+        match tokio::time::timeout(Duration::from_secs(3), TcpStream::connect(&target_addr)).await {
+            Ok(Ok(mut admin_stream)) => {
+                let write_res = tokio::time::timeout(
+                    Duration::from_secs(3),
+                    admin_stream.write_all(req.as_bytes()),
+                )
+                .await;
+                if write_res.is_ok() {
+                    let mut resp_buf = [0u8; 512];
+                    if let Ok(Ok(n)) = tokio::time::timeout(
+                        Duration::from_secs(3),
+                        admin_stream.read(&mut resp_buf),
+                    )
+                    .await
+                    {
+                        let resp_str = String::from_utf8_lossy(&resp_buf[..n]);
+                        if resp_str.contains("200 OK")
+                            || resp_str.contains("SHOUTcast")
+                            || resp_str.contains("updinfo")
+                        {
+                            self.metadata_delivered.store(true, Ordering::Relaxed);
+                            *self.metadata_error.write() = None;
+                            return;
+                        }
+                    }
+                    self.metadata_delivered.store(false, Ordering::Relaxed);
+                    *self.metadata_error.write() =
+                        Some("DNAS rejected or did not confirm metadata update".to_string());
+                } else {
+                    self.metadata_delivered.store(false, Ordering::Relaxed);
+                    *self.metadata_error.write() =
+                        Some("Timed out writing metadata to DNAS /admin.cgi".to_string());
+                }
+            }
+            Ok(Err(e)) => {
+                self.metadata_delivered.store(false, Ordering::Relaxed);
+                *self.metadata_error.write() =
+                    Some(format!("Failed to connect to DNAS admin port: {}", e));
+            }
+            Err(_) => {
+                self.metadata_delivered.store(false, Ordering::Relaxed);
+                *self.metadata_error.write() =
+                    Some("Timed out connecting to DNAS admin port".to_string());
+            }
         }
     }
 
@@ -350,6 +449,8 @@ impl ShoutcastClient {
             reconnect_count: self.reconnect_count.load(Ordering::Relaxed) as u32,
             error_message: self.last_error_message.read().clone(),
             last_connected_at: self.last_connected_at.read().clone(),
+            metadata_delivered: self.metadata_delivered.load(Ordering::Relaxed),
+            metadata_error: self.metadata_error.read().clone(),
             config: self.config.read().clone(),
         }
     }
@@ -360,18 +461,26 @@ impl ShoutcastClient {
         let is_conn = *self.state.read() == BroadcastState::Connected;
         let actual_upload = *self.measured_kbps.read();
 
+        // Calculate honest buffer health: remaining queue capacity ratio
+        let depth = self.network_queue_depth.load(Ordering::Relaxed);
+        let buffer_health = if is_conn && self.network_queue_capacity > 0 {
+            (1.0 - (depth as f32 / self.network_queue_capacity as f32)).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+
         StreamMetrics {
             target_bitrate_kbps: cfg.bitrate,
             actual_upload_kbps: if is_conn { actual_upload } else { 0.0 },
-            buffer_health_ratio: if is_conn { 1.0 } else { 0.0 },
+            buffer_health_ratio: buffer_health,
             dropped_frames: self.dropped_network_packets.load(Ordering::Relaxed),
             bytes_sent: bytes,
-            network_latency_ms: 0, // Unmeasured without active ICMP/ping probe; honest 0
+            network_latency_ms: 0, // Honest 0 (unmeasured without ICMP probe)
         }
     }
 }
 
-// Minimal urlencoding helper to avoid unnecessary external crate
+// Minimal urlencoding helper
 mod urlencoding {
     pub fn encode(data: &str) -> String {
         let mut escaped = String::new();
@@ -393,40 +502,69 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_base64_encoder() {
-        assert_eq!(
-            encode_base64(b"source:password123"),
-            "c291cmNlOnBhc3N3b3JkMTIz"
-        );
-        assert_eq!(encode_base64(b"admin:hackme"), "YWRtaW46aGFja21l");
-    }
-
-    #[test]
-    fn test_handshake_serialization() {
+    fn test_auth_line_single_stream() {
         let mut cfg = ShoutcastConfig::default();
-        cfg.server = "127.0.0.1".to_string();
-        cfg.port = 8000;
-        cfg.mount_point = Some("/live".to_string());
-        cfg.password = Some("secret".to_string());
-        cfg.bitrate = 192;
-        cfg.station_name = "Studio Test".to_string();
+        cfg.password = Some("my_secret_pass".to_string());
+        cfg.stream_id = 1;
 
-        let handshake = format_source_handshake(&cfg);
-        assert!(handshake.starts_with("SOURCE /live HTTP/1.0\r\n"));
-        assert!(handshake.contains("Authorization: Basic "));
-        assert!(handshake.contains("ice-name: Studio Test\r\n"));
-        assert!(handshake.contains("ice-bitrate: 192\r\n"));
-        assert!(handshake.ends_with("\r\n\r\n"));
+        assert_eq!(format_auth_line(&cfg), "my_secret_pass\r\n");
     }
 
     #[test]
-    fn test_validate_handshake_responses() {
-        assert!(validate_handshake_response("HTTP/1.0 200 OK\r\n").is_ok());
-        assert!(validate_handshake_response("ICY 200 OK\r\n").is_ok());
-        assert!(validate_handshake_response("OK2\r\n").is_ok());
+    fn test_auth_line_multi_stream() {
+        let mut cfg = ShoutcastConfig::default();
+        cfg.password = Some("adminpass".to_string());
+        cfg.stream_id = 2;
 
-        assert!(validate_handshake_response("HTTP/1.0 401 Unauthorized\r\n").is_err());
-        assert!(validate_handshake_response("invalid password\r\n").is_err());
+        assert_eq!(format_auth_line(&cfg), "adminpass:#2\r\n");
+    }
+
+    #[test]
+    fn test_icy_stream_headers() {
+        let mut cfg = ShoutcastConfig::default();
+        cfg.station_name = "Rock Station".to_string();
+        cfg.genre = Some("Classic Rock".to_string());
+        cfg.bitrate = 192;
+        cfg.is_public = true;
+
+        let headers = format_icy_stream_headers(&cfg);
+        assert!(headers.contains("icy-name:Rock Station\r\n"));
+        assert!(headers.contains("icy-genre:Classic Rock\r\n"));
+        assert!(headers.contains("icy-br:192\r\n"));
+        assert!(headers.contains("icy-pub:1\r\n"));
+        assert!(headers.ends_with("\r\n\r\n"));
+    }
+
+    #[test]
+    fn test_validate_dnas_response() {
+        // Standard DNAS 1 & 2 responses
+        assert!(validate_dnas_response("OK2\r\n").is_ok());
+        assert!(validate_dnas_response("OK2\r\nicy-caps:11\r\n\r\n").is_ok());
+
+        // Rejections
+        assert!(validate_dnas_response("invalid password\r\n").is_err());
+        assert!(validate_dnas_response("").is_err());
+        assert!(validate_dnas_response("HTTP/1.0 401 Unauthorized").is_err());
+    }
+
+    #[test]
+    fn test_metadata_update_request_formatting() {
+        let mut cfg = ShoutcastConfig::default();
+        cfg.password = Some("secret".to_string());
+        cfg.stream_id = 1;
+
+        let meta = TrackMetadata {
+            title: "Bohemian Rhapsody".to_string(),
+            artist: "Queen".to_string(),
+            album: None,
+            duration_ms: None,
+            station_name: None,
+        };
+
+        let req = format_metadata_update_request(&cfg, &meta);
+        assert!(req
+            .starts_with("GET /admin.cgi?mode=updinfo&pass=secret&song=Queen+-+Bohemian+Rhapsody"));
+        assert!(req.ends_with("\r\n\r\n"));
     }
 
     #[tokio::test]
@@ -434,7 +572,6 @@ mod tests {
         let client = ShoutcastClient::new(ShoutcastConfig::default());
         assert_eq!(client.get_status().state, BroadcastState::Offline);
 
-        // Stopping an offline client terminates cleanly and remains Offline
         let stopped_status = client.stop().await;
         assert_eq!(stopped_status.state, BroadcastState::Offline);
         assert!(!client.is_running.load(Ordering::Relaxed));
@@ -444,9 +581,9 @@ mod tests {
     #[test]
     fn test_byte_counters_and_metrics() {
         let client = ShoutcastClient::new(ShoutcastConfig::default());
-        client.bytes_sent.store(1048576, Ordering::Relaxed);
+        client.bytes_sent.store(204800, Ordering::Relaxed);
         let metrics = client.get_metrics();
-        assert_eq!(metrics.bytes_sent, 1048576);
+        assert_eq!(metrics.bytes_sent, 204800);
         assert_eq!(metrics.network_latency_ms, 0); // Honest 0, not fake 18
     }
 }

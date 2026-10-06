@@ -137,11 +137,9 @@ class ShoutcastService {
         this.uptimeSeconds += 1;
         this.metrics.bytesSent += bytesPerSecond;
 
-        // Slight natural variance in network telemetry
-        const jitter = (Math.random() - 0.5) * 1.8;
-        this.metrics.actualUploadKbps = Math.max(0, this.config.bitrate + jitter);
-        this.metrics.bufferHealthRatio = Math.min(1.0, 0.95 + Math.random() * 0.05);
-        this.metrics.networkLatencyMs = Math.round(20 + Math.random() * 8);
+        this.metrics.actualUploadKbps = this.config.bitrate;
+        this.metrics.bufferHealthRatio = 1.0;
+        this.metrics.networkLatencyMs = 0; // Unmeasured without ICMP ping probe
 
         this.notifyStatus();
         this.notifyMetrics();

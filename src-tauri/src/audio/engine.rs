@@ -1,6 +1,6 @@
 use crate::audio::buffer::{create_audio_ring_buffer, AudioConsumer};
 use crate::audio::capture::{AudioCaptureManager, AudioCaptureStream};
-use crate::audio::mixer::{ChannelStrip, ChannelStripSnapshot, MasterBus};
+use crate::audio::mixer::{sum_channel_buffers, ChannelStrip, ChannelStripSnapshot, MasterBus};
 use crate::models::AudioMetrics;
 use crossbeam_channel::{bounded, Receiver, Sender, TrySendError};
 use parking_lot::Mutex;
@@ -198,6 +198,9 @@ impl AudioEngine {
         is_running.store(true, Ordering::SeqCst);
 
         let mic = self.mic_channel.clone();
+        let music = self.music_channel.clone();
+        let aux = self.aux_channel.clone();
+        let sfx = self.sfx_channel.clone();
         let master = self.master_bus.clone();
         let consumer_slot = self.consumer_slot.clone();
         let encoder_tap_tx = self.encoder_tap_tx.clone();
@@ -206,7 +209,11 @@ impl AudioEngine {
         let dropped_rec = self.dropped_recorder_frames.clone();
 
         let handle = thread::spawn(move || {
-            let mut block = vec![0.0f32; PROCESSING_BLOCK_SAMPLES];
+            let mut mic_block = vec![0.0f32; PROCESSING_BLOCK_SAMPLES];
+            let mut music_block = vec![0.0f32; PROCESSING_BLOCK_SAMPLES];
+            let mut aux_block = vec![0.0f32; PROCESSING_BLOCK_SAMPLES];
+            let mut sfx_block = vec![0.0f32; PROCESSING_BLOCK_SAMPLES];
+            let mut master_sum = vec![0.0f32; PROCESSING_BLOCK_SAMPLES];
 
             while is_running.load(Ordering::Relaxed) {
                 let start_time = std::time::Instant::now();
@@ -215,10 +222,10 @@ impl AudioEngine {
                 let has_audio = {
                     let mut cons_guard = consumer_slot.lock();
                     if let Some(consumer) = cons_guard.as_mut() {
-                        consumer.pop_slice(&mut block);
+                        consumer.pop_slice(&mut mic_block);
                         true
                     } else {
-                        block.fill(0.0);
+                        mic_block.fill(0.0);
                         false
                     }
                 };
@@ -226,24 +233,38 @@ impl AudioEngine {
                 // 2. Process microphone channel strip
                 let mic_gain = mic.compute_linear_gain();
                 if has_audio {
-                    mic.update_meters(&block);
+                    mic.update_meters(&mic_block);
                 } else {
                     mic.update_meters(&[]);
                 }
 
-                for s in block.iter_mut() {
+                for s in mic_block.iter_mut() {
                     *s *= mic_gain;
                 }
 
-                // 3. Process master bus (gain + soft limiter)
-                master.process_master(&mut block);
+                // 3. Placeholder channels (music, aux, sfx) — currently silence until Phase D
+                music_block.fill(0.0);
+                aux_block.fill(0.0);
+                sfx_block.fill(0.0);
+                music.update_meters(&[]);
+                aux.update_meters(&[]);
+                sfx.update_meters(&[]);
 
-                // 4. Distribute to master output tap subscribers
+                // 4. Genuine master summing: sum active channel buffers into master_sum accumulator
+                sum_channel_buffers(
+                    &[&mic_block, &music_block, &aux_block, &sfx_block],
+                    &mut master_sum,
+                );
+
+                // 5. Process master bus (gain + soft limiter)
+                master.process_master(&mut master_sum);
+
+                // 6. Distribute to master output tap subscribers
                 // Non-blocking overflow policy: drop frame if queue is full, increment drop counter
                 {
                     let enc_guard = encoder_tap_tx.lock();
                     if let Some(tx) = enc_guard.as_ref() {
-                        match tx.try_send(block.clone()) {
+                        match tx.try_send(master_sum.clone()) {
                             Ok(()) => {}
                             Err(TrySendError::Full(_)) => {
                                 dropped_enc.fetch_add(1, Ordering::Relaxed);
@@ -256,7 +277,7 @@ impl AudioEngine {
                 {
                     let rec_guard = recorder_tap_tx.lock();
                     if let Some(tx) = rec_guard.as_ref() {
-                        match tx.try_send(block.clone()) {
+                        match tx.try_send(master_sum.clone()) {
                             Ok(()) => {}
                             Err(TrySendError::Full(_)) => {
                                 dropped_rec.fetch_add(1, Ordering::Relaxed);
@@ -266,7 +287,7 @@ impl AudioEngine {
                     }
                 }
 
-                // 5. Pace processing to ~10ms if not hardware driven
+                // 7. Pace processing to ~10ms if not hardware driven
                 let elapsed = start_time.elapsed();
                 let target_interval = Duration::from_micros(10_000); // 10ms
                 if elapsed < target_interval {

@@ -107,6 +107,15 @@ pub async fn audio_stop(state: State<'_, AppState>) -> Result<(), String> {
 }
 
 #[command]
+pub async fn audio_set_device(
+    state: State<'_, AppState>,
+    device_id: String,
+) -> Result<String, String> {
+    state.audio_engine.stop_capture();
+    state.audio_engine.start_capture(Some(&device_id))
+}
+
+#[command]
 pub async fn audio_set_gain(
     state: State<'_, AppState>,
     channel_id: String,
@@ -190,6 +199,13 @@ pub async fn recording_stop(state: State<'_, AppState>) -> Result<serde_json::Va
         "droppedFrames": result.dropped_frames,
         "writeErrors": result.write_errors
     }))
+}
+
+#[command]
+pub async fn recording_get_status(
+    state: State<'_, AppState>,
+) -> Result<crate::recording::RecordingResult, String> {
+    Ok(state.recorder.get_status())
 }
 
 #[command]

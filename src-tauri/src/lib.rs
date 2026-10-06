@@ -23,6 +23,7 @@ pub fn run() {
             audio_get_devices,
             audio_start,
             audio_stop,
+            audio_set_device,
             audio_set_gain,
             audio_set_fader,
             audio_mute,
@@ -34,6 +35,7 @@ pub fn run() {
             transcript_get_segments,
             recording_start,
             recording_stop,
+            recording_get_status,
             metadata_set,
         ])
         .run(tauri::generate_context!())
