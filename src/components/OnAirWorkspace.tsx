@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { BroadcastStatus } from '../types/broadcast';
 import { StreamMetrics } from '../types/telemetry';
 import { TranscriptSegment, TranscriptStatus } from '../types/transcript';
@@ -15,6 +15,22 @@ interface OnAirWorkspaceProps {
   onReconnect: () => void;
 }
 
+const formatUptime = (seconds: number): string => {
+  const hrs = Math.floor(seconds / 3600);
+  const mins = Math.floor((seconds % 3600) / 60);
+  const secs = seconds % 60;
+  return `${hrs.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+};
+
+const dbToUnit = (db: number): number => Math.max(0, Math.min(1, (db + 60) / 60));
+
+const formatBytes = (bytes: number): string => {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
+};
+
 export const OnAirWorkspace: React.FC<OnAirWorkspaceProps> = ({
   status,
   metrics,
@@ -27,311 +43,195 @@ export const OnAirWorkspace: React.FC<OnAirWorkspaceProps> = ({
   onReconnect,
 }) => {
   const isLive = status.state === 'CONNECTED';
+  const level = dbToUnit(masterRmsDb);
+  const peak = dbToUnit(masterPeakDb);
+  const recentSegments = useMemo(() => transcriptSegments.slice(-5), [transcriptSegments]);
 
-  // Convert dBFS (-60dB to 0dB) to percentage (0% to 100%)
-  const dbToPercent = (db: number) => {
-    if (db <= -60) return 0;
-    if (db >= 0) return 100;
-    return Math.round(((db + 60) / 60) * 100);
-  };
-
-  const peakPercent = dbToPercent(masterPeakDb);
-  const rmsPercent = dbToPercent(masterRmsDb);
+  const waveformPattern = [
+    0.25, 0.42, 0.68, 0.86, 0.55, 0.38, 0.22, 0.48, 0.72, 0.92, 0.63, 0.34,
+    0.19, 0.46, 0.79, 0.58, 0.31, 0.23, 0.53, 0.76, 0.9, 0.64, 0.36, 0.2,
+    0.32, 0.57, 0.82, 0.71, 0.44, 0.26, 0.41, 0.67, 0.88, 0.58, 0.33, 0.18,
+  ];
 
   return (
-    <div
-      style={{
-        flex: 1,
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 'var(--space-4)',
-        padding: 'var(--space-5)',
-        overflowY: 'auto',
-        backgroundColor: 'var(--color-bg)',
-      }}
-    >
-      {/* Top Banner: Action Controls & Primary Status */}
-      <section
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          backgroundColor: 'var(--color-surface)',
-          padding: 'var(--space-4) var(--space-5)',
-          borderRadius: 'var(--radius-md)',
-          border: '1px solid var(--color-border)',
-        }}
-      >
+    <section className="ws-workspace ws-workspace--air">
+      <div className="ws-command-row">
         <div>
-          <h1 style={{ fontSize: 'var(--text-h2)', fontWeight: 700, margin: 0 }}>
-            Master Broadcast Console
-          </h1>
-          <p style={{ fontSize: 'var(--text-small)', color: 'var(--color-text-secondary)', marginTop: '2px' }}>
-            Direct engine routing to SHOUTcast v1/v2 server with live transcript buffer.
+          <div className="ws-kicker">On Air / Master</div>
+          <h1 className="ws-title">{status.config.stationName}</h1>
+          <p className="ws-subtitle">
+            One working surface for the live signal, SHOUTcast transport, and speech timeline.
           </p>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
+        <div className="ws-transport">
           {status.state === 'ERROR' && (
-            <button
-              onClick={onReconnect}
-              style={{
-                padding: 'var(--space-2) var(--space-4)',
-                borderRadius: 'var(--radius-sm)',
-                backgroundColor: 'var(--color-surface-elevated)',
-                border: '1px solid var(--color-warning)',
-                color: 'var(--color-warning)',
-                fontWeight: 600,
-                fontSize: 'var(--text-small)',
-              }}
-            >
+            <button type="button" className="ws-secondary-action" onClick={onReconnect}>
               Reconnect
             </button>
           )}
+          <button
+            type="button"
+            className="ws-primary-action"
+            data-live={isLive}
+            onClick={isLive ? onStopBroadcast : onStartBroadcast}
+          >
+            {isLive ? 'Stop Broadcast' : 'Start Broadcast'}
+          </button>
+        </div>
+      </div>
 
-          {isLive ? (
-            <button
-              onClick={onStopBroadcast}
-              style={{
-                padding: 'var(--space-3) var(--space-6)',
-                borderRadius: 'var(--radius-sm)',
-                backgroundColor: 'var(--color-error)',
-                color: '#FFFFFF',
-                fontWeight: 700,
-                letterSpacing: '0.04em',
-                boxShadow: '0 0 12px var(--color-error-glow)',
-              }}
-            >
-              STOP BROADCAST
-            </button>
-          ) : (
-            <button
-              onClick={onStartBroadcast}
-              style={{
-                padding: 'var(--space-3) var(--space-6)',
-                borderRadius: 'var(--radius-sm)',
-                backgroundColor: 'var(--color-live)',
-                color: 'var(--color-live-text)',
-                fontWeight: 700,
-                letterSpacing: '0.04em',
-                boxShadow: '0 0 12px var(--color-live-glow)',
-              }}
-            >
-              START BROADCAST
-            </button>
-          )}
+      <section className="ws-signal-board" aria-label="Master signal visualization">
+        <div className="ws-signal-header">
+          <div className="ws-signal-title">
+            <span>Master signal</span>
+            <span className="ws-kicker">{isLive ? 'flowing' : 'idle'}</span>
+          </div>
+          <div className="ws-signal-caption">
+            {status.config.bitrate} kbps / {status.config.codec}
+          </div>
+        </div>
+
+        <div className="ws-signal-stage">
+          <div className="ws-signal-scale" aria-hidden="true">
+            <span>-60</span>
+            <span>-36</span>
+            <span>-18</span>
+            <span>-12</span>
+            <span>-6</span>
+            <span>-3</span>
+            <span>0 dBFS</span>
+          </div>
+
+          <div className="ws-wave" data-live={isLive} aria-label={`Master RMS ${masterRmsDb.toFixed(1)} dBFS`}>
+            {waveformPattern.map((shape, index) => (
+              <span
+                key={index}
+                className="ws-wave-bar"
+                style={{
+                  height: isLive ? `${Math.max(2, level * shape * 100)}%` : '2px',
+                  opacity: isLive ? 0.55 + level * 0.45 : 0.22,
+                }}
+              />
+            ))}
+          </div>
+
+          <div className="ws-playhead" data-live={isLive} aria-hidden="true" />
+
+          <div className="ws-signal-footer">
+            <span>RMS <strong>{masterRmsDb.toFixed(1)} dBFS</strong></span>
+            <span>PEAK <strong>{masterPeakDb.toFixed(1)} dBFS</strong></span>
+            <span>Headroom <strong>{Math.max(0, 0 - masterPeakDb).toFixed(1)} dB</strong></span>
+          </div>
         </div>
       </section>
 
-      {/* Middle Grid: Master Audio Meter & Output Server Telemetry */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-4)' }}>
-        {/* Card 1: Master Audio Levels */}
-        <section
-          style={{
-            backgroundColor: 'var(--color-surface)',
-            border: '1px solid var(--color-border)',
-            borderRadius: 'var(--radius-md)',
-            padding: 'var(--space-4)',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 'var(--space-3)',
-          }}
-        >
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <h2 style={{ fontSize: 'var(--text-body)', fontWeight: 600, margin: 0 }}>
-              Master Output Audio Meter
-            </h2>
-            <span className="font-mono" style={{ fontSize: 'var(--text-small)', color: 'var(--color-text-secondary)' }}>
-              Peak: {masterPeakDb.toFixed(1)} dBFS
+      <div className="ws-bottom-grid">
+        <section className="ws-transcript-preview" aria-label="Live transcript preview">
+          <div className="ws-section-head">
+            <h2>Live transcript</h2>
+            <span>
+              {transcriptStatus.config.isLocal ? 'Local' : 'Cloud'} / {transcriptStatus.config.language.toUpperCase()}
             </span>
           </div>
-
-          {/* Level Bars */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
-            <div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 'var(--text-micro)', color: 'var(--color-text-muted)', marginBottom: '2px' }}>
-                <span>PEAK</span>
-                <span className="font-mono">{peakPercent}%</span>
+          <div className="ws-transcript-body">
+            {recentSegments.length === 0 ? (
+              <div className="ws-empty">
+                <div>
+                  <strong>{transcriptStatus.state === 'LISTENING' ? 'Waiting for speech' : 'Transcript is idle'}</strong>
+                  {isLive
+                    ? 'The live speech pipeline is ready for incoming audio.'
+                    : 'Start the broadcast to begin the live session.'}
+                </div>
               </div>
-              <div style={{ height: '10px', backgroundColor: 'var(--color-surface-elevated)', borderRadius: 'var(--radius-sm)', overflow: 'hidden' }}>
-                <div
-                  style={{
-                    height: '100%',
-                    width: `${peakPercent}%`,
-                    backgroundColor: peakPercent > 90 ? 'var(--color-error)' : 'var(--color-live)',
-                    transition: 'width 100ms ease-out',
-                  }}
-                />
-              </div>
-            </div>
-
-            <div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 'var(--text-micro)', color: 'var(--color-text-muted)', marginBottom: '2px' }}>
-                <span>RMS</span>
-                <span className="font-mono">{rmsPercent}%</span>
-              </div>
-              <div style={{ height: '10px', backgroundColor: 'var(--color-surface-elevated)', borderRadius: 'var(--radius-sm)', overflow: 'hidden' }}>
-                <div
-                  style={{
-                    height: '100%',
-                    width: `${rmsPercent}%`,
-                    backgroundColor: 'var(--color-info)',
-                    transition: 'width 100ms ease-out',
-                  }}
-                />
-              </div>
-            </div>
-          </div>
-
-          <div style={{ fontSize: 'var(--text-micro)', color: 'var(--color-text-muted)' }}>
-            Target headroom: -3.0 dBFS. Audio path is unblocked and processed on high-priority thread.
+            ) : (
+              recentSegments.map((segment: TranscriptSegment) => (
+                <div className="ws-transcript-line" key={segment.id} data-current={!segment.finalized}>
+                  <span className="ws-transcript-time">
+                    {Math.floor(segment.startMs / 1000)}s
+                  </span>
+                  <span className="ws-transcript-text" data-interim={!segment.finalized}>
+                    {segment.text}
+                  </span>
+                </div>
+              ))
+            )}
           </div>
         </section>
 
-        {/* Card 2: SHOUTcast Server & Telemetry */}
-        <section
-          style={{
-            backgroundColor: 'var(--color-surface)',
-            border: '1px solid var(--color-border)',
-            borderRadius: 'var(--radius-md)',
-            padding: 'var(--space-4)',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 'var(--space-3)',
-          }}
-        >
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <h2 style={{ fontSize: 'var(--text-body)', fontWeight: 600, margin: 0 }}>
-              SHOUTcast Output Pipeline
-            </h2>
-            <span
-              style={{
-                fontSize: 'var(--text-micro)',
-                fontWeight: 600,
-                color: isLive ? 'var(--color-live)' : 'var(--color-text-muted)',
-              }}
-            >
-              {status.state}
-            </span>
+        <section className="ws-stream-panel" aria-label="SHOUTcast stream telemetry">
+          <div className="ws-section-head">
+            <h2>SHOUTcast</h2>
+            <span>{status.state}</span>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 'var(--space-2)', fontSize: 'var(--text-small)' }}>
-            <div>
-              <span style={{ color: 'var(--color-text-muted)' }}>Server: </span>
-              <span className="font-mono">{status.config.server}:{status.config.port}</span>
+          <div className="ws-stream-body">
+            <div className="ws-stream-main">
+              <div className="ws-stream-state">
+                <strong>{status.state === 'CONNECTED' ? 'Signal is live' : 'Stream is idle'}</strong>
+                <span>{formatUptime(status.uptimeSeconds)}</span>
+              </div>
+
+              <div className="ws-meter-pair">
+                <div>
+                  <div className="ws-meter-label">
+                    <span>Audio</span>
+                    <span>{Math.round(level * 100)}%</span>
+                  </div>
+                  <div className="ws-meter">
+                    <div
+                      className="ws-meter-fill"
+                      data-danger={peak > 0.95}
+                      style={{ transform: `scaleX(${Math.max(0.02, level)})` }}
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <div className="ws-meter-label">
+                    <span>Upload</span>
+                    <span>{metrics.actualUploadKbps.toFixed(1)} kbps</span>
+                  </div>
+                  <div className="ws-meter">
+                    <div
+                      className="ws-meter-fill"
+                      data-warning={metrics.actualUploadKbps > 0 && metrics.actualUploadKbps < status.config.bitrate * 0.9}
+                      style={{ transform: `scaleX(${Math.max(0.02, Math.min(1, metrics.actualUploadKbps / Math.max(1, status.config.bitrate)))})` }}
+                    />
+                  </div>
+                </div>
+              </div>
             </div>
-            <div>
-              <span style={{ color: 'var(--color-text-muted)' }}>Stream ID: </span>
-              <span className="font-mono">#{status.config.streamId}</span>
-            </div>
-            <div>
-              <span style={{ color: 'var(--color-text-muted)' }}>Upload Rate: </span>
-              <span className="font-mono" style={{ color: 'var(--color-text-primary)' }}>
-                {metrics.actualUploadKbps.toFixed(1)} kbps
-              </span>
-            </div>
-            <div>
-              <span style={{ color: 'var(--color-text-muted)' }}>Buffer Ratio: </span>
-              <span className="font-mono">
-                {(metrics.bufferHealthRatio * 100).toFixed(0)}%
-              </span>
-            </div>
-            <div>
-              <span style={{ color: 'var(--color-text-muted)' }}>Network Latency: </span>
-              <span className="font-mono">{metrics.networkLatencyMs} ms</span>
-            </div>
-            <div>
-              <span style={{ color: 'var(--color-text-muted)' }}>Dropped Packets: </span>
-              <span className="font-mono">{metrics.droppedFrames}</span>
+
+            <div className="ws-stream-grid">
+              <div className="ws-stream-field">
+                <span>Server</span>
+                <strong>{status.config.server}:{status.config.port}</strong>
+              </div>
+              <div className="ws-stream-field">
+                <span>Stream</span>
+                <strong>#{status.config.streamId}</strong>
+              </div>
+              <div className="ws-stream-field">
+                <span>Latency</span>
+                <strong>{metrics.networkLatencyMs} ms</strong>
+              </div>
+              <div className="ws-stream-field">
+                <span>Dropped</span>
+                <strong>{metrics.droppedFrames}</strong>
+              </div>
+              <div className="ws-stream-field">
+                <span>Buffer</span>
+                <strong>{Math.round(metrics.bufferHealthRatio * 100)}%</strong>
+              </div>
+              <div className="ws-stream-field">
+                <span>Sent</span>
+                <strong>{formatBytes(metrics.bytesSent)}</strong>
+              </div>
             </div>
           </div>
         </section>
       </div>
-
-      {/* Bottom Section: Live Transcription Preview */}
-      <section
-        style={{
-          backgroundColor: 'var(--color-surface)',
-          border: '1px solid var(--color-border)',
-          borderRadius: 'var(--radius-md)',
-          padding: 'var(--space-4)',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 'var(--space-3)',
-          flex: 1,
-          minHeight: '200px',
-        }}
-      >
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
-            <h2 style={{ fontSize: 'var(--text-body)', fontWeight: 600, margin: 0 }}>
-              Live Speech Transcription
-            </h2>
-            <span
-              style={{
-                fontSize: 'var(--text-micro)',
-                padding: '1px 6px',
-                borderRadius: 'var(--radius-sm)',
-                backgroundColor: transcriptStatus.config.isLocal ? 'rgba(217, 255, 85, 0.1)' : 'rgba(103, 183, 255, 0.1)',
-                color: transcriptStatus.config.isLocal ? 'var(--color-live)' : 'var(--color-info)',
-                fontWeight: 600,
-              }}
-            >
-              {transcriptStatus.config.isLocal ? 'Local Whisper (Private)' : 'Cloud Adapter'}
-            </span>
-          </div>
-
-          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
-            <span style={{ fontSize: 'var(--text-micro)', color: 'var(--color-text-secondary)' }}>
-              Language: {transcriptStatus.config.language.toUpperCase()}
-            </span>
-            <button
-              onClick={() => {}}
-              style={{
-                fontSize: 'var(--text-micro)',
-                padding: '2px 8px',
-                backgroundColor: 'var(--color-surface-elevated)',
-                border: '1px solid var(--color-border)',
-                borderRadius: 'var(--radius-sm)',
-              }}
-            >
-              Jump to Live
-            </button>
-          </div>
-        </div>
-
-        {/* Segments Display */}
-        <div
-          style={{
-            flex: 1,
-            backgroundColor: 'var(--color-surface-elevated)',
-            border: '1px solid var(--color-border)',
-            borderRadius: 'var(--radius-sm)',
-            padding: 'var(--space-3)',
-            overflowY: 'auto',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 'var(--space-2)',
-          }}
-        >
-          {transcriptSegments.length === 0 ? (
-            <div style={{ color: 'var(--color-text-muted)', fontSize: 'var(--text-small)', fontStyle: 'italic', padding: 'var(--space-2)' }}>
-              {isLive ? 'Listening for speech input...' : 'Audio stream is idle. Start broadcast or toggle microphone to begin transcribing.'}
-            </div>
-          ) : (
-            transcriptSegments.map((seg) => (
-              <div key={seg.id} style={{ display: 'flex', gap: 'var(--space-3)', fontSize: 'var(--text-small)' }}>
-                <span className="font-mono" style={{ color: 'var(--color-text-muted)', fontSize: 'var(--text-micro)', flexShrink: 0, marginTop: '2px' }}>
-                  {Math.floor(seg.startMs / 1000)}s
-                </span>
-                <span style={{ color: seg.finalized ? 'var(--color-text-primary)' : 'var(--color-text-secondary)' }}>
-                  {seg.text}
-                </span>
-              </div>
-            ))
-          )}
-        </div>
-      </section>
-    </div>
+    </section>
   );
 };
