@@ -179,6 +179,41 @@ class AutomationEngine {
           });
         }
         break;
+      case 'PLAY_DECK': {
+        const deck = action.payload?.deckId || 'deck_a';
+        await (await import('../playbackService')).playbackService.playDeck(deck);
+        break;
+      }
+      case 'PAUSE_DECK': {
+        const deck = action.payload?.deckId || 'deck_a';
+        await (await import('../playbackService')).playbackService.pauseDeck(deck);
+        break;
+      }
+      case 'STOP_DECK': {
+        const deck = action.payload?.deckId || 'deck_a';
+        await (await import('../playbackService')).playbackService.stopDeck(deck);
+        break;
+      }
+      case 'NEXT_TRACK':
+        await (await import('../playbackService')).playbackService.triggerControlAction('next_track');
+        break;
+      case 'TRANSITION_DECK': {
+        const target = action.payload?.targetDeckId || 'deck_b';
+        const mode = action.payload?.mode || 'linear_crossfade';
+        await (await import('../playbackService')).playbackService.triggerTransition(target, mode);
+        break;
+      }
+      case 'SET_FADER': {
+        const ch = action.payload?.channelId || 'master';
+        const level = action.payload?.level ?? 0.85;
+        audioEngine.setChannelFader(ch, level);
+        break;
+      }
+      case 'SET_MUTE': {
+        const ch = action.payload?.channelId || 'mic';
+        audioEngine.toggleMute(ch);
+        break;
+      }
     }
   }
 

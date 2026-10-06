@@ -114,6 +114,76 @@ pub fn format_metadata_update_request(cfg: &ShoutcastConfig, meta: &TrackMetadat
     }
 }
 
+pub fn validate_broadcast_preflight(
+    cfg: &ShoutcastConfig,
+    is_engine_running: bool,
+    is_already_streaming: bool,
+) -> Result<(), Vec<crate::models::BroadcastPreflightError>> {
+    let mut errors = Vec::new();
+
+    if is_already_streaming {
+        errors.push(crate::models::BroadcastPreflightError {
+            field: "state".to_string(),
+            code: "ALREADY_STREAMING".to_string(),
+            message: "A broadcast stream is already active".to_string(),
+        });
+    }
+
+    if !is_engine_running {
+        errors.push(crate::models::BroadcastPreflightError {
+            field: "engine".to_string(),
+            code: "AUDIO_ENGINE_STOPPED".to_string(),
+            message: "Native real-time audio engine is not running".to_string(),
+        });
+    }
+
+    if cfg.server.trim().is_empty() {
+        errors.push(crate::models::BroadcastPreflightError {
+            field: "server".to_string(),
+            code: "SERVER_EMPTY".to_string(),
+            message: "Server host or IP address cannot be empty".to_string(),
+        });
+    }
+
+    if cfg.port == 0 {
+        errors.push(crate::models::BroadcastPreflightError {
+            field: "port".to_string(),
+            code: "PORT_INVALID".to_string(),
+            message: "DNAS source port must be between 1 and 65535".to_string(),
+        });
+    }
+
+    if cfg.password.as_deref().unwrap_or("").trim().is_empty() {
+        errors.push(crate::models::BroadcastPreflightError {
+            field: "password".to_string(),
+            code: "PASSWORD_EMPTY".to_string(),
+            message: "DNAS stream password is required for authentication".to_string(),
+        });
+    }
+
+    if cfg.stream_id < 1 {
+        errors.push(crate::models::BroadcastPreflightError {
+            field: "streamId".to_string(),
+            code: "STREAM_ID_INVALID".to_string(),
+            message: "Stream ID must be 1 or higher".to_string(),
+        });
+    }
+
+    if cfg.bitrate < 32 || cfg.bitrate > 320 {
+        errors.push(crate::models::BroadcastPreflightError {
+            field: "bitrate".to_string(),
+            code: "BITRATE_INVALID".to_string(),
+            message: "Bitrate must be between 32 kbps and 320 kbps".to_string(),
+        });
+    }
+
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors)
+    }
+}
+
 pub struct ShoutcastClient {
     config: RwLock<ShoutcastConfig>,
     current_metadata: RwLock<TrackMetadata>,

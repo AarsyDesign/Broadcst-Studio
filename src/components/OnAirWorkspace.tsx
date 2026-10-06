@@ -4,7 +4,7 @@ import { playbackService } from '../services/playbackService';
 import { BroadcastStatus } from '../types/broadcast';
 import { StreamMetrics } from '../types/telemetry';
 import { TranscriptSegment, TranscriptStatus } from '../types/transcript';
-import { FullPlaybackSnapshot } from '../types/ipc';
+import { BroadcastPreflightError, FullPlaybackSnapshot } from '../types/ipc';
 
 interface OnAirWorkspaceProps {
   status: BroadcastStatus;
@@ -58,6 +58,9 @@ export const OnAirWorkspace: React.FC<OnAirWorkspaceProps> = ({
   const recentSegments = useMemo(() => transcriptSegments.slice(-5), [transcriptSegments]);
 
   const [playbackSnap, setPlaybackSnap] = useState<FullPlaybackSnapshot>(playbackService.getSnapshot());
+  const [preflightErrors, setPreflightErrors] = useState<BroadcastPreflightError[]>([]);
+  const [showPreflightModal, setShowPreflightModal] = useState<boolean>(false);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   useEffect(() => {
     const unsub = playbackService.onSnapshot((snap) => {
@@ -66,16 +69,16 @@ export const OnAirWorkspace: React.FC<OnAirWorkspaceProps> = ({
     return unsub;
   }, []);
 
+  const showToast = (msg: string) => {
+    setToastMessage(msg);
+    setTimeout(() => setToastMessage(null), 3000);
+  };
+
   const waveformPattern = [
     0.25, 0.42, 0.68, 0.86, 0.55, 0.38, 0.22, 0.48, 0.72, 0.92, 0.63, 0.34,
     0.19, 0.46, 0.79, 0.58, 0.31, 0.23, 0.53, 0.76, 0.9, 0.64, 0.36, 0.2,
     0.32, 0.57, 0.82, 0.71, 0.44, 0.26, 0.41, 0.67, 0.88, 0.58, 0.33, 0.18,
   ];
-
-  const nowPlayingTitle =
-    playbackSnap.currentTrack?.title || shoutcastService.getCurrentMetadata().title;
-  const nowPlayingArtist =
-    playbackSnap.currentTrack?.artist || shoutcastService.getCurrentMetadata().artist;
 
   const deckA = playbackSnap.deckA;
   const deckB = playbackSnap.deckB;
@@ -85,10 +88,31 @@ export const OnAirWorkspace: React.FC<OnAirWorkspaceProps> = ({
   const deckAPos = Math.round(deckA.positionMs / 1000);
   const deckADur = Math.max(1, Math.round(deckA.durationMs / 1000));
   const deckAPercent = deckA.track ? Math.min(100, (deckAPos / deckADur) * 100) : 0;
+  const deckARem = Math.max(0, deckADur - deckAPos);
 
   const deckBPos = Math.round(deckB.positionMs / 1000);
   const deckBDur = Math.max(1, Math.round(deckB.durationMs / 1000));
   const deckBPercent = deckB.track ? Math.min(100, (deckBPos / deckBDur) * 100) : 0;
+  const deckBRem = Math.max(0, deckBDur - deckBPos);
+
+  const nowPlaying = playbackSnap.nowPlaying;
+  const nowPlayingTitle =
+    nowPlaying?.track?.title || playbackSnap.currentTrack?.title || shoutcastService.getCurrentMetadata().title;
+  const nowPlayingArtist =
+    nowPlaying?.track?.artist || playbackSnap.currentTrack?.artist || shoutcastService.getCurrentMetadata().artist;
+  const nowPlayingDeck = nowPlaying?.deckId ? (nowPlaying.deckId === 'deck_a' ? 'Deck A' : 'Deck B') : (playbackSnap.activeDeck === 'deck_a' ? 'Deck A' : 'Deck B');
+
+  const handleStartBroadcastClick = async () => {
+    // Run broadcast preflight validation first
+    const errors = await shoutcastService.validatePreflight(status.config);
+    if (errors && errors.length > 0) {
+      setPreflightErrors(errors);
+      setShowPreflightModal(true);
+      return;
+    }
+    // Validation passed -> proceed to start broadcast
+    onStartBroadcast();
+  };
 
   const handleToggleDeckA = async () => {
     if (isDeckAPlaying) {
@@ -111,84 +135,145 @@ export const OnAirWorkspace: React.FC<OnAirWorkspaceProps> = ({
     await playbackService.setCrossfader(val);
   };
 
+  const handleTransition = async (targetDeckId: 'deck_a' | 'deck_b', mode: 'hard_cut' | 'linear_crossfade') => {
+    const ok = await playbackService.triggerTransition(targetDeckId, mode, 2500);
+    if (ok) {
+      showToast(`${mode === 'hard_cut' ? 'Hard Cut' : 'Crossfade'} transition to ${targetDeckId === 'deck_a' ? 'Deck A' : 'Deck B'} triggered`);
+    }
+  };
+
+  const handleToggleMonitorSource = async () => {
+    const nextSource = playbackSnap.monitorSource === 'master' ? 'cue' : 'master';
+    await playbackService.setMonitorSource(nextSource as any);
+    showToast(`Physical monitor output routed to: ${nextSource.toUpperCase()}`);
+  };
+
   return (
     <section className="ws-workspace ws-workspace--air">
       <div className="ws-command-row">
         <div>
-          <div className="ws-kicker">On Air / Master</div>
+          <div className="ws-kicker">On Air / Master Console</div>
           <h1 className="ws-title">{status.config.stationName}</h1>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px' }}>
-            <span className="ws-badge" data-variant={isLive ? 'live' : 'neutral'}>
-              {isLive ? '● ON AIR' : 'OFFLINE'}
+            <span
+              className="ws-badge"
+              data-variant={isLive ? 'live' : status.state === 'ERROR' ? 'danger' : 'neutral'}
+            >
+              {isLive ? '● ON AIR' : status.state}
             </span>
             <span style={{ fontSize: '11px', color: 'var(--ws-muted)' }}>
-              Now Playing: <strong style={{ color: 'var(--ws-text)' }}>{nowPlayingTitle}</strong> — {nowPlayingArtist}
+              Now Playing ({nowPlayingDeck}): <strong style={{ color: 'var(--ws-text)' }}>{nowPlayingTitle}</strong> — {nowPlayingArtist}
             </span>
           </div>
         </div>
 
         <div className="ws-transport">
+          {/* Cue vs Program Monitor Toggle */}
+          <button
+            type="button"
+            className="ws-secondary-action"
+            onClick={handleToggleMonitorSource}
+            title="Toggle whether physical headphones output hears Master Program or Cue Bus"
+            style={{
+              borderColor: playbackSnap.monitorSource === 'cue' ? 'var(--ws-warning)' : undefined,
+              color: playbackSnap.monitorSource === 'cue' ? 'var(--ws-warning)' : undefined,
+            }}
+          >
+            Monitor: {playbackSnap.monitorSource.toUpperCase()}
+          </button>
+
           {status.state === 'ERROR' && (
             <button type="button" className="ws-secondary-action" onClick={onReconnect}>
               Reconnect
             </button>
           )}
+
           <button
             type="button"
             className="ws-primary-action"
             data-live={isLive}
-            onClick={isLive ? onStopBroadcast : onStartBroadcast}
+            onClick={isLive ? onStopBroadcast : handleStartBroadcastClick}
           >
             {isLive ? 'Stop Broadcast' : 'Start Broadcast'}
           </button>
         </div>
       </div>
 
-      {/* Dual Deck Broadcast Console */}
+      {/* Dual Deck Broadcast Workstation */}
       <div
         style={{
           display: 'grid',
-          gridTemplateColumns: 'minmax(0, 1fr) 140px minmax(0, 1fr)',
+          gridTemplateColumns: 'minmax(0, 1fr) 190px minmax(0, 1fr)',
           gap: '12px',
           padding: '12px 14px',
           background: 'var(--ws-panel)',
           border: '1px solid var(--ws-line)',
           borderRadius: '7px',
-          alignItems: 'center',
+          alignItems: 'start',
         }}
       >
-        {/* Deck A Column */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+        {/* DECK A */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
               <span className="ws-badge" data-variant={isDeckAPlaying ? 'live' : 'neutral'}>
                 DECK A • {deckA.state.toUpperCase()}
               </span>
               {playbackSnap.activeDeck === 'deck_a' && <span className="ws-tag">FOCUSED</span>}
+              {deckA.muted && <span className="ws-tag" style={{ color: 'var(--ws-danger)' }}>MUTED</span>}
             </div>
-            <button
-              type="button"
-              className="ws-mini-action"
-              onClick={handleToggleDeckA}
-              style={{
-                borderColor: isDeckAPlaying ? 'var(--ws-live)' : undefined,
-                color: isDeckAPlaying ? 'var(--ws-live)' : undefined,
-              }}
-            >
-              {isDeckAPlaying ? 'Pause' : 'Play'}
-            </button>
+
+            <div style={{ display: 'flex', gap: '4px' }}>
+              <button
+                type="button"
+                className="ws-mini-action"
+                onClick={handleToggleDeckA}
+                style={{
+                  borderColor: isDeckAPlaying ? 'var(--ws-live)' : undefined,
+                  color: isDeckAPlaying ? 'var(--ws-live)' : undefined,
+                }}
+              >
+                {isDeckAPlaying ? 'Pause' : 'Play'}
+              </button>
+              <button
+                type="button"
+                className="ws-mini-action"
+                onClick={() => playbackService.stopDeck('deck_a')}
+                title="Stop Deck A"
+              >
+                Stop
+              </button>
+              <button
+                type="button"
+                className="ws-mini-action"
+                onClick={() => playbackService.restartDeck('deck_a')}
+                title="Restart Deck A from beginning"
+              >
+                Restart
+              </button>
+            </div>
           </div>
 
-          <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--ws-text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            {deckA.track ? deckA.track.title : 'No track loaded'}
-          </div>
-          <div style={{ fontSize: '10px', color: 'var(--ws-muted)' }}>
-            {deckA.track ? `${deckA.track.artist}` : 'Cue from playlist'}
+          <div>
+            <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--ws-text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {deckA.track ? deckA.track.title : 'No track loaded'}
+            </div>
+            <div style={{ fontSize: '11px', color: 'var(--ws-muted)' }}>
+              {deckA.track ? `${deckA.track.artist} ${deckA.track.album ? `• ${deckA.track.album}` : ''}` : 'Cue or load track from library'}
+            </div>
           </div>
 
           <div
             className="ws-deck-progress-bar"
-            style={{ height: '4px', background: 'var(--ws-panel-3)', borderRadius: '2px', overflow: 'hidden' }}
+            style={{ height: '6px', background: 'var(--ws-panel-3)', borderRadius: '3px', overflow: 'hidden', cursor: 'pointer' }}
+            title="Click to seek position on Deck A"
+            onClick={async (e) => {
+              if (!deckA.track) return;
+              const rect = e.currentTarget.getBoundingClientRect();
+              const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+              const targetMs = Math.round(ratio * deckA.durationMs);
+              await playbackService.seekDeck('deck_a', targetMs);
+            }}
           >
             <div
               style={{
@@ -200,17 +285,122 @@ export const OnAirWorkspace: React.FC<OnAirWorkspaceProps> = ({
             />
           </div>
 
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9px', fontFamily: 'var(--font-mono)', color: 'var(--ws-subtle)' }}>
-            <span>{formatDuration(deckAPos)}</span>
-            <span>{formatDuration(deckADur)}</span>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', fontFamily: 'var(--font-mono)', color: 'var(--ws-subtle)' }}>
+            <span>{formatDuration(deckAPos)} ({deckA.playbackPercent.toFixed(1)}%)</span>
+            <span>Cue: {formatDuration(Math.round(deckA.cuePositionMs / 1000))}</span>
+            <span>-{formatDuration(deckARem)} / {formatDuration(deckADur)}</span>
+          </div>
+
+          {/* Deck A Cue & Operational Bar */}
+          <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', paddingTop: '4px', borderTop: '1px solid var(--ws-line)' }}>
+            <button
+              type="button"
+              className="ws-mini-action"
+              style={{
+                borderColor: deckA.cue ? 'var(--ws-warning)' : undefined,
+                color: deckA.cue ? 'var(--ws-warning)' : undefined,
+              }}
+              onClick={async () => {
+                const nextCue = !deckA.cue;
+                await playbackService.setDeckCue('deck_a', nextCue);
+                showToast(`Deck A Cue monitor: ${nextCue ? 'ACTIVE' : 'OFF'}`);
+              }}
+              title="Route Deck A to Cue Monitor"
+            >
+              Cue {deckA.cue ? '●' : '○'}
+            </button>
+            <button
+              type="button"
+              className="ws-mini-action"
+              onClick={() => playbackService.setCuePosition('deck_a')}
+              title="Set current playhead as Cue Position"
+            >
+              Set Cue
+            </button>
+            <button
+              type="button"
+              className="ws-mini-action"
+              onClick={() => playbackService.returnToCue('deck_a')}
+              title="Return to Cue Position"
+            >
+              Return Cue
+            </button>
+            <button
+              type="button"
+              className="ws-mini-action"
+              onClick={() => playbackService.startFromCue('deck_a')}
+              title="Start playback from Cue Position"
+            >
+              Start Cue
+            </button>
+            <button
+              type="button"
+              className="ws-mini-action"
+              style={{
+                color: deckA.muted ? 'var(--ws-danger)' : undefined,
+                borderColor: deckA.muted ? 'var(--ws-danger)' : undefined,
+              }}
+              onClick={() => playbackService.setDeckMute('deck_a', !deckA.muted)}
+              title="Mute Deck A"
+            >
+              Mute
+            </button>
+            <button
+              type="button"
+              className="ws-mini-action"
+              onClick={() => playbackService.unloadDeck('deck_a')}
+              title="Unload track from Deck A"
+            >
+              Unload
+            </button>
           </div>
         </div>
 
-        {/* Center Crossfader */}
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
+        {/* CENTER TRANSITION CONSOLE */}
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', padding: '0 4px' }}>
           <div style={{ fontSize: '9.5px', fontWeight: 700, letterSpacing: '0.08em', color: 'var(--ws-muted)' }}>
-            CROSSFADER
+            BROADCAST TRANSITIONS
           </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px', width: '100%' }}>
+            <button
+              type="button"
+              className="ws-mini-action"
+              style={{ fontSize: '9px', padding: '4px 6px' }}
+              onClick={() => handleTransition('deck_a', 'hard_cut')}
+              title="Instantly cut to Deck A"
+            >
+              Cut Deck A
+            </button>
+            <button
+              type="button"
+              className="ws-mini-action"
+              style={{ fontSize: '9px', padding: '4px 6px' }}
+              onClick={() => handleTransition('deck_b', 'hard_cut')}
+              title="Instantly cut to Deck B"
+            >
+              Cut Deck B
+            </button>
+            <button
+              type="button"
+              className="ws-mini-action"
+              style={{ fontSize: '9px', padding: '4px 6px' }}
+              onClick={() => handleTransition('deck_a', 'linear_crossfade')}
+              title="Smooth linear crossfade to Deck A"
+            >
+              Fade → A
+            </button>
+            <button
+              type="button"
+              className="ws-mini-action"
+              style={{ fontSize: '9px', padding: '4px 6px' }}
+              onClick={() => handleTransition('deck_b', 'linear_crossfade')}
+              title="Smooth linear crossfade to Deck B"
+            >
+              Fade → B
+            </button>
+          </div>
+
           <input
             type="range"
             min="-1"
@@ -219,46 +409,78 @@ export const OnAirWorkspace: React.FC<OnAirWorkspaceProps> = ({
             value={playbackSnap.crossfader}
             onChange={handleCrossfaderChange}
             style={{ width: '100%', accentColor: 'var(--ws-live)' }}
-            title="Deck A ← Crossfade → Deck B"
+            title="Deck A ← Crossfader → Deck B"
           />
+
           <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', fontSize: '8px', color: 'var(--ws-subtle)', fontFamily: 'var(--font-mono)' }}>
             <span>DECK A</span>
+            <span>{playbackSnap.crossfader.toFixed(2)}</span>
             <span>DECK B</span>
           </div>
         </div>
 
-        {/* Deck B Column */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+        {/* DECK B */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
               <span className="ws-badge" data-variant={isDeckBPlaying ? 'live' : 'neutral'}>
                 DECK B • {deckB.state.toUpperCase()}
               </span>
               {playbackSnap.activeDeck === 'deck_b' && <span className="ws-tag">FOCUSED</span>}
+              {deckB.muted && <span className="ws-tag" style={{ color: 'var(--ws-danger)' }}>MUTED</span>}
             </div>
-            <button
-              type="button"
-              className="ws-mini-action"
-              onClick={handleToggleDeckB}
-              style={{
-                borderColor: isDeckBPlaying ? 'var(--ws-live)' : undefined,
-                color: isDeckBPlaying ? 'var(--ws-live)' : undefined,
-              }}
-            >
-              {isDeckBPlaying ? 'Pause' : 'Play'}
-            </button>
+
+            <div style={{ display: 'flex', gap: '4px' }}>
+              <button
+                type="button"
+                className="ws-mini-action"
+                onClick={handleToggleDeckB}
+                style={{
+                  borderColor: isDeckBPlaying ? 'var(--ws-live)' : undefined,
+                  color: isDeckBPlaying ? 'var(--ws-live)' : undefined,
+                }}
+              >
+                {isDeckBPlaying ? 'Pause' : 'Play'}
+              </button>
+              <button
+                type="button"
+                className="ws-mini-action"
+                onClick={() => playbackService.stopDeck('deck_b')}
+                title="Stop Deck B"
+              >
+                Stop
+              </button>
+              <button
+                type="button"
+                className="ws-mini-action"
+                onClick={() => playbackService.restartDeck('deck_b')}
+                title="Restart Deck B from beginning"
+              >
+                Restart
+              </button>
+            </div>
           </div>
 
-          <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--ws-text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            {deckB.track ? deckB.track.title : 'No track loaded'}
-          </div>
-          <div style={{ fontSize: '10px', color: 'var(--ws-muted)' }}>
-            {deckB.track ? `${deckB.track.artist}` : 'Cue from playlist'}
+          <div>
+            <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--ws-text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {deckB.track ? deckB.track.title : 'No track loaded'}
+            </div>
+            <div style={{ fontSize: '11px', color: 'var(--ws-muted)' }}>
+              {deckB.track ? `${deckB.track.artist} ${deckB.track.album ? `• ${deckB.track.album}` : ''}` : 'Cue or load track from library'}
+            </div>
           </div>
 
           <div
             className="ws-deck-progress-bar"
-            style={{ height: '4px', background: 'var(--ws-panel-3)', borderRadius: '2px', overflow: 'hidden' }}
+            style={{ height: '6px', background: 'var(--ws-panel-3)', borderRadius: '3px', overflow: 'hidden', cursor: 'pointer' }}
+            title="Click to seek position on Deck B"
+            onClick={async (e) => {
+              if (!deckB.track) return;
+              const rect = e.currentTarget.getBoundingClientRect();
+              const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+              const targetMs = Math.round(ratio * deckB.durationMs);
+              await playbackService.seekDeck('deck_b', targetMs);
+            }}
           >
             <div
               style={{
@@ -270,13 +492,79 @@ export const OnAirWorkspace: React.FC<OnAirWorkspaceProps> = ({
             />
           </div>
 
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9px', fontFamily: 'var(--font-mono)', color: 'var(--ws-subtle)' }}>
-            <span>{formatDuration(deckBPos)}</span>
-            <span>{formatDuration(deckBDur)}</span>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', fontFamily: 'var(--font-mono)', color: 'var(--ws-subtle)' }}>
+            <span>{formatDuration(deckBPos)} ({deckB.playbackPercent.toFixed(1)}%)</span>
+            <span>Cue: {formatDuration(Math.round(deckB.cuePositionMs / 1000))}</span>
+            <span>-{formatDuration(deckBRem)} / {formatDuration(deckBDur)}</span>
+          </div>
+
+          {/* Deck B Cue & Operational Bar */}
+          <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', paddingTop: '4px', borderTop: '1px solid var(--ws-line)' }}>
+            <button
+              type="button"
+              className="ws-mini-action"
+              style={{
+                borderColor: deckB.cue ? 'var(--ws-warning)' : undefined,
+                color: deckB.cue ? 'var(--ws-warning)' : undefined,
+              }}
+              onClick={async () => {
+                const nextCue = !deckB.cue;
+                await playbackService.setDeckCue('deck_b', nextCue);
+                showToast(`Deck B Cue monitor: ${nextCue ? 'ACTIVE' : 'OFF'}`);
+              }}
+              title="Route Deck B to Cue Monitor"
+            >
+              Cue {deckB.cue ? '●' : '○'}
+            </button>
+            <button
+              type="button"
+              className="ws-mini-action"
+              onClick={() => playbackService.setCuePosition('deck_b')}
+              title="Set current playhead as Cue Position"
+            >
+              Set Cue
+            </button>
+            <button
+              type="button"
+              className="ws-mini-action"
+              onClick={() => playbackService.returnToCue('deck_b')}
+              title="Return to Cue Position"
+            >
+              Return Cue
+            </button>
+            <button
+              type="button"
+              className="ws-mini-action"
+              onClick={() => playbackService.startFromCue('deck_b')}
+              title="Start playback from Cue Position"
+            >
+              Start Cue
+            </button>
+            <button
+              type="button"
+              className="ws-mini-action"
+              style={{
+                color: deckB.muted ? 'var(--ws-danger)' : undefined,
+                borderColor: deckB.muted ? 'var(--ws-danger)' : undefined,
+              }}
+              onClick={() => playbackService.setDeckMute('deck_b', !deckB.muted)}
+              title="Mute Deck B"
+            >
+              Mute
+            </button>
+            <button
+              type="button"
+              className="ws-mini-action"
+              onClick={() => playbackService.unloadDeck('deck_b')}
+              title="Unload track from Deck B"
+            >
+              Unload
+            </button>
           </div>
         </div>
       </div>
 
+      {/* Signal Board */}
       <section className="ws-signal-board" aria-label="Master signal visualization">
         <div className="ws-signal-header">
           <div className="ws-signal-title">
@@ -327,6 +615,7 @@ export const OnAirWorkspace: React.FC<OnAirWorkspaceProps> = ({
         </div>
       </section>
 
+      {/* Bottom Telemetry & Status Grids */}
       <div className="ws-bottom-grid">
         <section className="ws-transcript-preview" aria-label="Live transcript preview">
           <div className="ws-section-head">
@@ -362,21 +651,21 @@ export const OnAirWorkspace: React.FC<OnAirWorkspaceProps> = ({
 
         <section className="ws-stream-panel" aria-label="SHOUTcast stream telemetry">
           <div className="ws-section-head">
-            <h2>SHOUTcast</h2>
-            <span>{status.state}</span>
+            <h2>SHOUTcast Broadcast State</h2>
+            <span className="ws-badge" data-variant={isLive ? 'live' : 'neutral'}>{status.state}</span>
           </div>
 
           <div className="ws-stream-body">
             <div className="ws-stream-main">
               <div className="ws-stream-state">
-                <strong>{status.state === 'CONNECTED' ? 'Signal is live' : 'Stream is idle'}</strong>
-                <span>{formatUptime(status.uptimeSeconds)}</span>
+                <strong>{status.state === 'CONNECTED' ? 'Stream active & transmitting' : 'Stream is offline / ready'}</strong>
+                <span>Uptime: {formatUptime(status.uptimeSeconds)}</span>
               </div>
 
               <div className="ws-meter-pair">
                 <div>
                   <div className="ws-meter-label">
-                    <span>Audio</span>
+                    <span>Audio Master</span>
                     <span>{Math.round(level * 100)}%</span>
                   </div>
                   <div className="ws-meter">
@@ -390,7 +679,7 @@ export const OnAirWorkspace: React.FC<OnAirWorkspaceProps> = ({
 
                 <div>
                   <div className="ws-meter-label">
-                    <span>Upload</span>
+                    <span>Upload Rate</span>
                     <span>{metrics.actualUploadKbps.toFixed(1)} kbps</span>
                   </div>
                   <div className="ws-meter">
@@ -406,33 +695,103 @@ export const OnAirWorkspace: React.FC<OnAirWorkspaceProps> = ({
 
             <div className="ws-stream-grid">
               <div className="ws-stream-field">
-                <span>Server</span>
+                <span>Server Endpoint</span>
                 <strong>{status.config.server}:{status.config.port}</strong>
               </div>
               <div className="ws-stream-field">
-                <span>Stream</span>
+                <span>Stream ID</span>
                 <strong>#{status.config.streamId}</strong>
               </div>
               <div className="ws-stream-field">
-                <span>Latency</span>
-                <strong>{metrics.networkLatencyMs > 0 ? `${metrics.networkLatencyMs} ms` : '—'}</strong>
+                <span>Reconnects</span>
+                <strong>{status.reconnectCount}</strong>
               </div>
               <div className="ws-stream-field">
-                <span>Dropped</span>
+                <span>Dropped Frames</span>
                 <strong>{metrics.droppedFrames}</strong>
               </div>
               <div className="ws-stream-field">
-                <span>Buffer</span>
+                <span>Buffer Health</span>
                 <strong>{Math.round(metrics.bufferHealthRatio * 100)}%</strong>
               </div>
               <div className="ws-stream-field">
-                <span>Sent</span>
+                <span>Total Data Sent</span>
                 <strong>{formatBytes(metrics.bytesSent)}</strong>
               </div>
             </div>
           </div>
         </section>
       </div>
+
+      {/* Broadcast Preflight Validation Modal */}
+      {showPreflightModal && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0, 0, 0, 0.72)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000,
+          }}
+        >
+          <div
+            style={{
+              width: '460px',
+              background: 'var(--ws-panel)',
+              border: '1px solid var(--ws-danger)',
+              borderRadius: '8px',
+              padding: '18px 20px',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '12px',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span className="ws-badge" data-variant="danger">PRE-FLIGHT FAILED</span>
+              <h2 style={{ fontSize: '15px', fontWeight: 700, margin: 0 }}>Broadcast Verification Check</h2>
+            </div>
+            <p style={{ fontSize: '12px', color: 'var(--ws-muted)', margin: 0 }}>
+              The native broadcast pre-flight check prevented connection because required parameters are invalid or missing:
+            </p>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '180px', overflowY: 'auto' }}>
+              {preflightErrors.map((err, idx) => (
+                <div
+                  key={idx}
+                  style={{
+                    padding: '8px 10px',
+                    background: 'var(--ws-panel-2)',
+                    borderLeft: '3px solid var(--ws-danger)',
+                    borderRadius: '4px',
+                  }}
+                >
+                  <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--ws-danger)' }}>
+                    [{err.code}] {err.field.toUpperCase()}
+                  </div>
+                  <div style={{ fontSize: '11px', color: 'var(--ws-text)', marginTop: '2px' }}>
+                    {err.message}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '6px' }}>
+              <button
+                type="button"
+                className="ws-primary-action"
+                onClick={() => setShowPreflightModal(false)}
+              >
+                Dismiss & Review Settings
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Toast Notification */}
+      {toastMessage && <div className="ws-toast">{toastMessage}</div>}
     </section>
   );
 };

@@ -14,7 +14,11 @@ class PlaybackService {
       positionMs: 0,
       durationMs: 0,
       remainingMs: 0,
+      playbackPercent: 0,
+      cuePositionMs: 0,
       volume: 1.0,
+      gainDb: 0.0,
+      muted: false,
       cue: false,
       looping: false,
     },
@@ -26,14 +30,22 @@ class PlaybackService {
       positionMs: 0,
       durationMs: 0,
       remainingMs: 0,
+      playbackPercent: 0,
+      cuePositionMs: 0,
       volume: 1.0,
+      gainDb: 0.0,
+      muted: false,
       cue: false,
       looping: false,
     },
     activeDeck: 'deck_a',
     crossfader: 0.0,
     autoAdvance: true,
+    monitorSource: 'master',
+    cueGainDb: 0.0,
+    cueMuted: false,
     currentTrack: null,
+    nowPlaying: null,
     isMonitoring: false,
     monitorDevice: null,
     broadcastState: 'OFFLINE',
@@ -132,6 +144,95 @@ class PlaybackService {
     return false;
   }
 
+  public async restartDeck(deckId: 'deck_a' | 'deck_b'): Promise<boolean> {
+    const res = await controlApi.execute('deck.restart', { deckId });
+    if (res.success) {
+      await this.refresh();
+      return true;
+    }
+    return false;
+  }
+
+  public async unloadDeck(deckId: 'deck_a' | 'deck_b'): Promise<boolean> {
+    const res = await controlApi.execute('deck.unload', { deckId });
+    if (res.success) {
+      await this.refresh();
+      return true;
+    }
+    return false;
+  }
+
+  public async setCuePosition(deckId: 'deck_a' | 'deck_b'): Promise<boolean> {
+    const res = await controlApi.execute('deck.set_cue_position', { deckId });
+    if (res.success) {
+      await this.refresh();
+      return true;
+    }
+    return false;
+  }
+
+  public async returnToCue(deckId: 'deck_a' | 'deck_b'): Promise<boolean> {
+    const res = await controlApi.execute('deck.return_to_cue', { deckId });
+    if (res.success) {
+      await this.refresh();
+      return true;
+    }
+    return false;
+  }
+
+  public async startFromCue(deckId: 'deck_a' | 'deck_b'): Promise<boolean> {
+    const res = await controlApi.execute('deck.start_from_cue', { deckId });
+    if (res.success) {
+      await this.refresh();
+      return true;
+    }
+    return false;
+  }
+
+  public async setDeckCue(deckId: 'deck_a' | 'deck_b', cue: boolean): Promise<boolean> {
+    const res = await controlApi.execute('deck.set_cue', { deckId, cue });
+    if (res.success) {
+      await this.refresh();
+      return true;
+    }
+    return false;
+  }
+
+  public async setDeckGain(deckId: 'deck_a' | 'deck_b', gainDb: number): Promise<boolean> {
+    const res = await controlApi.execute('deck.set_gain', { deckId, gainDb });
+    if (res.success) {
+      await this.refresh();
+      return true;
+    }
+    return false;
+  }
+
+  public async setDeckMute(deckId: 'deck_a' | 'deck_b', muted: boolean): Promise<boolean> {
+    const res = await controlApi.execute('deck.set_mute', { deckId, muted });
+    if (res.success) {
+      await this.refresh();
+      return true;
+    }
+    return false;
+  }
+
+  public async triggerTransition(
+    targetDeckId: 'deck_a' | 'deck_b',
+    mode: 'hard_cut' | 'linear_crossfade' | 'manual' = 'linear_crossfade',
+    durationMs: number = 2000
+  ): Promise<boolean> {
+    const res = await controlApi.execute('deck.trigger_transition', {
+      targetDeckId,
+      mode,
+      durationMs,
+    });
+    if (res.success) {
+      await this.refresh();
+      return true;
+    }
+    return false;
+  }
+
   public async setCrossfader(value: number): Promise<boolean> {
     const res = await controlApi.execute('deck.set_crossfader', { value });
     if (res.success) {
@@ -152,8 +253,38 @@ class PlaybackService {
     return false;
   }
 
+  public async setMonitorSource(source: 'master' | 'cue'): Promise<boolean> {
+    const res = await controlApi.execute('deck.set_monitor_source', { source });
+    if (res.success) {
+      this.currentSnapshot.monitorSource = source;
+      this.notifyListeners();
+      return true;
+    }
+    return false;
+  }
+
+  public async setCueGain(gainDb: number): Promise<boolean> {
+    const res = await controlApi.execute('deck.set_cue_gain', { gainDb });
+    if (res.success) {
+      this.currentSnapshot.cueGainDb = gainDb;
+      this.notifyListeners();
+      return true;
+    }
+    return false;
+  }
+
+  public async setCueMuted(muted: boolean): Promise<boolean> {
+    const res = await controlApi.execute('deck.set_cue_muted', { muted });
+    if (res.success) {
+      this.currentSnapshot.cueMuted = muted;
+      this.notifyListeners();
+      return true;
+    }
+    return false;
+  }
+
   // ==========================================
-  // PLAYLIST OPERATIONS
+  // PLAYLIST & LIBRARY OPERATIONS
   // ==========================================
 
   public async getPlaylist(): Promise<PlaylistItem[]> {
@@ -161,8 +292,38 @@ class PlaybackService {
     return res.success && res.data ? res.data : [];
   }
 
+  public async getLibrary(): Promise<PlaylistItem[]> {
+    const res = await controlApi.execute('playlist.get_library');
+    return res.success && res.data ? res.data : [];
+  }
+
+  public async scanFolder(folderPath: string): Promise<PlaylistItem[]> {
+    const res = await controlApi.execute('playlist.scan_folder', { folderPath });
+    return res.success && res.data ? res.data : [];
+  }
+
+  public async searchLibrary(query: string): Promise<PlaylistItem[]> {
+    const res = await controlApi.execute('playlist.search', { query });
+    return res.success && res.data ? res.data : [];
+  }
+
+  public async removeMissingFiles(): Promise<number> {
+    const res = await controlApi.execute('playlist.remove_missing');
+    return res.success && typeof res.data === 'number' ? res.data : 0;
+  }
+
+  public async togglePinned(id: string): Promise<boolean> {
+    const res = await controlApi.execute('playlist.toggle_pinned', { id });
+    return res.success && !!res.data;
+  }
+
   public async addFileToPlaylist(filePath: string): Promise<PlaylistItem | null> {
     const res = await controlApi.execute('playlist.add_file', { filePath });
+    return res.success && res.data ? res.data : null;
+  }
+
+  public async insertNext(filePath: string): Promise<PlaylistItem | null> {
+    const res = await controlApi.execute('playlist.insert_next', { filePath });
     return res.success && res.data ? res.data : null;
   }
 
@@ -174,6 +335,11 @@ class PlaybackService {
   public async clearPlaylist(): Promise<boolean> {
     const res = await controlApi.execute('playlist.clear');
     return res.success;
+  }
+
+  public async reorderQueue(from: number, to: number): Promise<boolean> {
+    const res = await controlApi.execute('playlist.reorder', { from, to });
+    return res.success && !!res.data;
   }
 
   public async playPlaylistItem(index: number, deckId?: string): Promise<TrackMetadataInfo | null> {

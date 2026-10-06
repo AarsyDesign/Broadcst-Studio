@@ -164,3 +164,24 @@ pub struct TranscriptStatus {
     pub config: TranscriptConfig,
     pub last_error_message: Option<String>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BroadcastPreflightError {
+    pub field: String,
+    pub code: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StationProfile {
+    pub id: String,
+    pub name: String,
+    pub callsign: Option<String>,
+    pub slogan: Option<String>,
+    pub genre: String,
+    pub server_type: String,
+    pub shoutcast_config: ShoutcastConfig,
+    pub is_active: bool,
+}

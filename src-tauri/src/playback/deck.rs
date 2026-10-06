@@ -61,7 +61,11 @@ pub struct DeckSnapshot {
     pub position_ms: u64,
     pub duration_ms: u64,
     pub remaining_ms: u64,
+    pub playback_percent: f32,
+    pub cue_position_ms: u64,
     pub volume: f32,
+    pub gain_db: f32,
+    pub muted: bool,
     pub cue: bool,
     pub looping: bool,
 }
@@ -71,7 +75,10 @@ pub struct Deck {
     pub name: String,
     state: AtomicU8,
     current_frame: AtomicU64,
+    cue_frame: AtomicU64,
     volume: AtomicU32,
+    gain_db: AtomicU32,
+    muted: AtomicBool,
     cue: AtomicBool,
     looping: AtomicBool,
     track: Arc<RwLock<Option<Arc<DecodedTrack>>>>,
@@ -84,7 +91,10 @@ impl Deck {
             name: name.to_string(),
             state: AtomicU8::new(STATE_EMPTY),
             current_frame: AtomicU64::new(0),
+            cue_frame: AtomicU64::new(0),
             volume: AtomicU32::new(1.0f32.to_bits()),
+            gain_db: AtomicU32::new(0.0f32.to_bits()),
+            muted: AtomicBool::new(false),
             cue: AtomicBool::new(false),
             looping: AtomicBool::new(false),
             track: Arc::new(RwLock::new(None)),
@@ -169,6 +179,69 @@ impl Deck {
         self.looping.load(Ordering::Relaxed)
     }
 
+    pub fn set_cue_position(&self) {
+        let cur = self.current_frame.load(Ordering::SeqCst);
+        self.cue_frame.store(cur, Ordering::SeqCst);
+    }
+
+    pub fn set_cue_ms(&self, position_ms: u64) {
+        let guard = self.track.read();
+        if let Some(track) = guard.as_ref() {
+            let total_frames = track.total_frames();
+            let target_frame = ((position_ms as f64 / 1000.0) * CANONICAL_SAMPLE_RATE as f64) as u64;
+            let clamped = target_frame.min(total_frames);
+            self.cue_frame.store(clamped, Ordering::SeqCst);
+        }
+    }
+
+    pub fn return_to_cue(&self) {
+        let cue = self.cue_frame.load(Ordering::SeqCst);
+        self.current_frame.store(cue, Ordering::SeqCst);
+        let cur = self.state.load(Ordering::SeqCst);
+        if cur == STATE_PLAYING {
+            self.state.store(STATE_PAUSED, Ordering::SeqCst);
+        }
+    }
+
+    pub fn start_from_cue(&self) {
+        let cue = self.cue_frame.load(Ordering::SeqCst);
+        self.current_frame.store(cue, Ordering::SeqCst);
+        let cur = self.state.load(Ordering::SeqCst);
+        if cur != STATE_EMPTY {
+            self.state.store(STATE_PLAYING, Ordering::SeqCst);
+        }
+    }
+
+    pub fn restart(&self) {
+        self.current_frame.store(0, Ordering::SeqCst);
+        let cur = self.state.load(Ordering::SeqCst);
+        if cur != STATE_EMPTY {
+            self.state.store(STATE_PLAYING, Ordering::SeqCst);
+        }
+    }
+
+    pub fn set_gain_db(&self, db: f32) {
+        let clamped = db.clamp(-60.0, 12.0);
+        store_atomic_f32(&self.gain_db, clamped);
+    }
+
+    pub fn gain_db(&self) -> f32 {
+        load_atomic_f32(&self.gain_db)
+    }
+
+    pub fn set_mute(&self, mute: bool) {
+        self.muted.store(mute, Ordering::Relaxed);
+    }
+
+    pub fn is_muted(&self) -> bool {
+        self.muted.load(Ordering::Relaxed)
+    }
+
+    pub fn cue_position_ms(&self) -> u64 {
+        let frames = self.cue_frame.load(Ordering::Relaxed);
+        ((frames as f64 / CANONICAL_SAMPLE_RATE as f64) * 1000.0) as u64
+    }
+
     pub fn position_ms(&self) -> u64 {
         let frames = self.current_frame.load(Ordering::Relaxed);
         ((frames as f64 / CANONICAL_SAMPLE_RATE as f64) * 1000.0) as u64
@@ -219,7 +292,9 @@ impl Deck {
 
         let start_sample = (cur_frame * 2) as usize;
         let end_sample = start_sample + frames_to_render * 2;
-        let vol = self.volume();
+        let is_muted = self.is_muted();
+        let linear_gain = 10.0f32.powf(self.gain_db() / 20.0);
+        let vol = if is_muted { 0.0 } else { self.volume() * linear_gain };
 
         if frames_to_render > 0 {
             let src = &track_ref.samples[start_sample..end_sample];
@@ -261,6 +336,11 @@ impl Deck {
         let duration_ms = track_info.as_ref().map(|i| i.duration_ms).unwrap_or(0);
         let position_ms = self.position_ms();
         let remaining_ms = duration_ms.saturating_sub(position_ms);
+        let playback_percent = if duration_ms > 0 {
+            ((position_ms as f64 / duration_ms as f64) * 100.0).clamp(0.0, 100.0) as f32
+        } else {
+            0.0
+        };
 
         DeckSnapshot {
             id: self.id.clone(),
@@ -270,7 +350,11 @@ impl Deck {
             position_ms,
             duration_ms,
             remaining_ms,
+            playback_percent,
+            cue_position_ms: self.cue_position_ms(),
             volume: self.volume(),
+            gain_db: self.gain_db(),
+            muted: self.is_muted(),
             cue: self.is_cue(),
             looping: self.is_looping(),
         }
@@ -340,5 +424,36 @@ mod tests {
         deck.stop();
         assert_eq!(deck.state(), DeckState::Stopped);
         assert_eq!(deck.position_ms(), 0);
+    }
+
+    #[test]
+    fn test_deck_cue_gain_and_mute() {
+        let deck = Deck::new("deck_b", "Deck B");
+        let track = create_test_track(4800);
+        deck.load_track(track);
+
+        // Seek to 30ms and set cue
+        deck.seek_ms(30);
+        deck.set_cue_position();
+        assert_eq!(deck.cue_position_ms(), 30);
+
+        // Advance to 60ms
+        deck.seek_ms(60);
+        assert_eq!(deck.position_ms(), 60);
+
+        // Return to cue
+        deck.return_to_cue();
+        assert_eq!(deck.position_ms(), 30);
+
+        // Test mute and gain
+        deck.play();
+        deck.set_mute(true);
+        let mut block = [0.0f32; 960];
+        deck.render_block(&mut block);
+        assert_eq!(block[0], 0.0);
+
+        deck.set_mute(false);
+        deck.set_gain_db(-6.0);
+        assert!((deck.gain_db() - (-6.0)).abs() < 0.01);
     }
 }

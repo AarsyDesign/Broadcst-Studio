@@ -187,13 +187,29 @@ export const App: React.FC = () => {
       else if (e.key === 'n' || e.key === 'N') {
         playbackService.triggerControlAction('next_track');
       }
-      // 1 -> Deck A
-      else if (e.key === '1') {
+      // Q -> Cue active deck
+      else if (e.key === 'q' || e.key === 'Q') {
+        playbackService.triggerControlAction('toggle_deck_cue');
+      }
+      // Esc -> Stop active deck
+      else if (e.key === 'Escape') {
+        playbackService.triggerControlAction('stop_active_deck');
+      }
+      // 1 or F1 -> Deck A
+      else if (e.key === '1' || e.key === 'F1') {
+        e.preventDefault();
         playbackService.triggerControlAction('select_deck', { deckId: 'deck_a' });
       }
-      // 2 -> Deck B
-      else if (e.key === '2') {
+      // 2 or F2 -> Deck B
+      else if (e.key === '2' || e.key === 'F2') {
+        e.preventDefault();
         playbackService.triggerControlAction('select_deck', { deckId: 'deck_b' });
+      }
+      // F5 -> Rescan device endpoints
+      else if (e.key === 'F5') {
+        e.preventDefault();
+        ipc.invoke('audio.get_devices');
+        ipc.invoke('audio.get_output_devices');
       }
     };
 

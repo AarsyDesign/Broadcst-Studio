@@ -384,6 +384,12 @@ export const AutomationWorkspace: React.FC = () => {
                   <option value="STOP_RECORD">STOP_RECORD (End recording)</option>
                   <option value="START_BROADCAST">START_BROADCAST (Go on air)</option>
                   <option value="STOP_BROADCAST">STOP_BROADCAST (Disconnect stream)</option>
+                  <option value="PLAY_DECK">PLAY_DECK (Start playback)</option>
+                  <option value="PAUSE_DECK">PAUSE_DECK (Pause playback)</option>
+                  <option value="STOP_DECK">STOP_DECK (Stop playback)</option>
+                  <option value="NEXT_TRACK">NEXT_TRACK (Advance queue)</option>
+                  <option value="TRANSITION_DECK">TRANSITION_DECK (Crossfade transition)</option>
+                  <option value="SET_MUTE">SET_MUTE (Toggle mute channel)</option>
                   <option value="PLAY_TONE">PLAY_TONE (Trigger cue chime)</option>
                 </select>
               </div>

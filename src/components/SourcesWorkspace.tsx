@@ -245,6 +245,110 @@ export const SourcesWorkspace: React.FC = () => {
         </div>
       </div>
 
+      {/* Program Path Routing Console */}
+      <div
+        style={{
+          border: '1px solid var(--ws-line)',
+          borderRadius: '7px',
+          background: 'var(--ws-panel)',
+          padding: '14px 18px',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '12px',
+        }}
+      >
+        <div className="ws-section-head" style={{ padding: 0 }}>
+          <h2>Program Path Signal Matrix</h2>
+          <span>Deterministic Signal Flow: Hardware & Playback → Mixer → Master → Endpoints</span>
+        </div>
+
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))',
+            gap: '10px',
+            alignItems: 'center',
+          }}
+        >
+          {/* Node 1: MIC */}
+          <div style={{ padding: '10px', background: 'var(--ws-panel-2)', borderRadius: '6px', border: '1px solid var(--ws-line)' }}>
+            <div style={{ fontSize: '10px', color: 'var(--ws-muted)' }}>INPUT 1</div>
+            <div style={{ fontWeight: 700, fontSize: '12px', color: 'var(--ws-text)' }}>MIC</div>
+            <div style={{ marginTop: '6px' }}>
+              <span className="ws-badge" data-variant={isCapturing ? 'live' : 'neutral'} style={{ fontSize: '9px', padding: '1px 5px' }}>
+                {isCapturing ? 'ACTIVE' : 'STANDBY'}
+              </span>
+            </div>
+          </div>
+
+          {/* Node 2: DECK A */}
+          <div style={{ padding: '10px', background: 'var(--ws-panel-2)', borderRadius: '6px', border: '1px solid var(--ws-line)' }}>
+            <div style={{ fontSize: '10px', color: 'var(--ws-muted)' }}>PLAYBACK</div>
+            <div style={{ fontWeight: 700, fontSize: '12px', color: 'var(--ws-text)' }}>DECK A</div>
+            <div style={{ marginTop: '6px' }}>
+              <span className="ws-badge" data-variant={playbackService.getSnapshot().deckA.state === 'playing' ? 'live' : 'neutral'} style={{ fontSize: '9px', padding: '1px 5px' }}>
+                {playbackService.getSnapshot().deckA.state.toUpperCase()}
+              </span>
+            </div>
+          </div>
+
+          {/* Node 3: DECK B */}
+          <div style={{ padding: '10px', background: 'var(--ws-panel-2)', borderRadius: '6px', border: '1px solid var(--ws-line)' }}>
+            <div style={{ fontSize: '10px', color: 'var(--ws-muted)' }}>PLAYBACK</div>
+            <div style={{ fontWeight: 700, fontSize: '12px', color: 'var(--ws-text)' }}>DECK B</div>
+            <div style={{ marginTop: '6px' }}>
+              <span className="ws-badge" data-variant={playbackService.getSnapshot().deckB.state === 'playing' ? 'live' : 'neutral'} style={{ fontSize: '9px', padding: '1px 5px' }}>
+                {playbackService.getSnapshot().deckB.state.toUpperCase()}
+              </span>
+            </div>
+          </div>
+
+          {/* Node 4: MIXER & MASTER */}
+          <div style={{ padding: '10px', background: 'var(--ws-panel-3)', borderRadius: '6px', border: '1px solid var(--ws-line)' }}>
+            <div style={{ fontSize: '10px', color: 'var(--ws-muted)' }}>BUS SUM</div>
+            <div style={{ fontWeight: 700, fontSize: '12px', color: 'var(--ws-text)' }}>MASTER</div>
+            <div style={{ marginTop: '6px' }}>
+              <span className="ws-badge" data-variant="live" style={{ fontSize: '9px', padding: '1px 5px' }}>
+                48kHz PCM
+              </span>
+            </div>
+          </div>
+
+          {/* Node 5: MONITOR */}
+          <div style={{ padding: '10px', background: 'var(--ws-panel-2)', borderRadius: '6px', border: '1px solid var(--ws-line)' }}>
+            <div style={{ fontSize: '10px', color: 'var(--ws-muted)' }}>ENDPOINT</div>
+            <div style={{ fontWeight: 700, fontSize: '12px', color: 'var(--ws-text)' }}>MONITOR</div>
+            <div style={{ marginTop: '6px' }}>
+              <span className="ws-badge" data-variant={isMonitoring ? 'live' : 'neutral'} style={{ fontSize: '9px', padding: '1px 5px' }}>
+                {isMonitoring ? 'OUTPUT ON' : 'MUTED'}
+              </span>
+            </div>
+          </div>
+
+          {/* Node 6: RECORDER */}
+          <div style={{ padding: '10px', background: 'var(--ws-panel-2)', borderRadius: '6px', border: '1px solid var(--ws-line)' }}>
+            <div style={{ fontSize: '10px', color: 'var(--ws-muted)' }}>ARCHIVE</div>
+            <div style={{ fontWeight: 700, fontSize: '12px', color: 'var(--ws-text)' }}>RECORDER</div>
+            <div style={{ marginTop: '6px' }}>
+              <span className="ws-badge" data-variant={playbackService.getSnapshot().isRecording ? 'danger' : 'neutral'} style={{ fontSize: '9px', padding: '1px 5px' }}>
+                {playbackService.getSnapshot().isRecording ? '● WRITING' : 'IDLE'}
+              </span>
+            </div>
+          </div>
+
+          {/* Node 7: SHOUTCAST STREAM */}
+          <div style={{ padding: '10px', background: 'var(--ws-panel-2)', borderRadius: '6px', border: '1px solid var(--ws-line)' }}>
+            <div style={{ fontSize: '10px', color: 'var(--ws-muted)' }}>TRANSMISSION</div>
+            <div style={{ fontWeight: 700, fontSize: '12px', color: 'var(--ws-text)' }}>STREAM</div>
+            <div style={{ marginTop: '6px' }}>
+              <span className="ws-badge" data-variant={playbackService.getSnapshot().broadcastState === 'Connected' ? 'live' : 'neutral'} style={{ fontSize: '9px', padding: '1px 5px' }}>
+                {playbackService.getSnapshot().broadcastState.toUpperCase()}
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+
       {/* Input Interfaces Table */}
       <div
         style={{

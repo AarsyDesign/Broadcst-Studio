@@ -1,9 +1,9 @@
 use crate::audio::MasterTapSubscription;
 use hound::{SampleFormat, WavSpec, WavWriter};
-use parking_lot::Mutex;
+use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File};
-use std::io::BufWriter;
+use std::io::{BufReader, BufWriter};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -21,6 +21,18 @@ pub struct RecordingResult {
     pub write_errors: u64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecordingHistoryItem {
+    pub id: String,
+    pub filename: String,
+    pub file_path: String,
+    pub started_at: String,
+    pub duration_seconds: f32,
+    pub file_size_bytes: u64,
+    pub status: String,
+}
+
 pub struct MasterRecorder {
     is_recording: Arc<AtomicBool>,
     samples_written: Arc<AtomicU64>,
@@ -28,31 +40,97 @@ pub struct MasterRecorder {
     dropped_frames_counter: Arc<Mutex<Option<Arc<AtomicU64>>>>,
     current_filepath: Arc<Mutex<Option<PathBuf>>>,
     current_session_id: Arc<Mutex<Option<String>>>,
+    current_started_at: Arc<Mutex<Option<String>>>,
     worker_handle: Arc<Mutex<Option<JoinHandle<Result<(), String>>>>>,
     sample_rate: u32,
     channels: u16,
+    history: Arc<RwLock<Vec<RecordingHistoryItem>>>,
+    history_file: PathBuf,
 }
 
 impl MasterRecorder {
     pub fn new(sample_rate: u32, channels: u16) -> Arc<Self> {
-        Arc::new(Self {
+        let history_file = Self::resolve_history_path();
+        let recorder = Arc::new(Self {
             is_recording: Arc::new(AtomicBool::new(false)),
             samples_written: Arc::new(AtomicU64::new(0)),
             write_errors: Arc::new(AtomicU64::new(0)),
             dropped_frames_counter: Arc::new(Mutex::new(None)),
             current_filepath: Arc::new(Mutex::new(None)),
             current_session_id: Arc::new(Mutex::new(None)),
+            current_started_at: Arc::new(Mutex::new(None)),
             worker_handle: Arc::new(Mutex::new(None)),
             sample_rate,
             channels,
-        })
+            history: Arc::new(RwLock::new(Vec::new())),
+            history_file,
+        });
+
+        recorder.load_history();
+        recorder
     }
 
-    /// Start recording master PCM frames to a dedicated WAV file.
-    /// Runs on a dedicated background worker thread off the audio engine thread.
+    fn resolve_history_path() -> PathBuf {
+        if let Ok(app_data) = std::env::var("APPDATA") {
+            let mut p = PathBuf::from(app_data);
+            p.push("BroadcstStudio");
+            let _ = fs::create_dir_all(&p);
+            return p.join("recordings_history.json");
+        }
+        PathBuf::from("recordings_history.json")
+    }
+
+    pub fn default_recordings_dir() -> PathBuf {
+        if let Ok(app_data) = std::env::var("APPDATA") {
+            let mut p = PathBuf::from(app_data);
+            p.push("BroadcstStudio");
+            p.push("Recordings");
+            let _ = fs::create_dir_all(&p);
+            return p;
+        }
+        PathBuf::from("recordings")
+    }
+
+    fn load_history(&self) {
+        if !self.history_file.exists() {
+            return;
+        }
+        if let Ok(f) = File::open(&self.history_file) {
+            let reader = BufReader::new(f);
+            if let Ok(items) = serde_json::from_reader::<_, Vec<RecordingHistoryItem>>(reader) {
+                *self.history.write() = items;
+            }
+        }
+    }
+
+    fn save_history(&self) {
+        if let Some(parent) = self.history_file.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        if let Ok(f) = File::create(&self.history_file) {
+            let writer = BufWriter::new(f);
+            let guard = self.history.read();
+            let _ = serde_json::to_writer_pretty(writer, &*guard);
+        }
+    }
+
+    pub fn get_history(&self) -> Vec<RecordingHistoryItem> {
+        self.history.read().clone()
+    }
+
     pub fn start(
         &self,
         output_dir: Option<&str>,
+        subscription: MasterTapSubscription,
+    ) -> Result<String, String> {
+        self.start_with_prefix(output_dir, None, subscription)
+    }
+
+    /// Start recording master PCM frames to a dedicated WAV file with custom naming.
+    pub fn start_with_prefix(
+        &self,
+        output_dir: Option<&str>,
+        prefix: Option<&str>,
         subscription: MasterTapSubscription,
     ) -> Result<String, String> {
         if self.is_recording.load(Ordering::SeqCst) {
@@ -62,7 +140,7 @@ impl MasterRecorder {
         // Establish explicit recordings directory
         let dir_path = output_dir
             .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("recordings"));
+            .unwrap_or_else(Self::default_recordings_dir);
 
         if !dir_path.exists() {
             fs::create_dir_all(&dir_path).map_err(|e| {
@@ -75,7 +153,12 @@ impl MasterRecorder {
 
         let timestamp = chrono::Utc::now();
         let session_id = format!("rec-{}", timestamp.timestamp());
-        let filename = format!("recording_{}.wav", timestamp.format("%Y%m%d_%H%M%S"));
+        let clean_prefix = prefix
+            .map(|p| p.trim().replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|', ' '], "_"))
+            .filter(|p| !p.is_empty())
+            .unwrap_or_else(|| "BroadcstMaster".to_string());
+
+        let filename = format!("{}_{}.wav", timestamp.format("%Y-%m-%d_%H-%M-%S"), clean_prefix);
         let full_path = dir_path.join(&filename);
 
         // WAV specification derived from actual engine parameters
@@ -93,6 +176,7 @@ impl MasterRecorder {
         self.write_errors.store(0, Ordering::SeqCst);
         *self.current_filepath.lock() = Some(full_path.clone());
         *self.current_session_id.lock() = Some(session_id.clone());
+        *self.current_started_at.lock() = Some(timestamp.to_rfc3339());
         *self.dropped_frames_counter.lock() = Some(subscription.dropped_frames.clone());
 
         self.is_recording.store(true, Ordering::SeqCst);
@@ -150,7 +234,7 @@ impl MasterRecorder {
         Ok(full_path.to_string_lossy().to_string())
     }
 
-    /// Stop the recording session, flush and finalize the WAV file, and return the honest recording metrics.
+    /// Stop the recording session, flush and finalize the WAV file, update history, and return metrics.
     pub fn stop(&self) -> Result<RecordingResult, String> {
         if !self.is_recording.load(Ordering::SeqCst) {
             return Err("No active recording session to stop".to_string());
@@ -190,6 +274,12 @@ impl MasterRecorder {
             .take()
             .unwrap_or_else(|| format!("rec-{}", chrono::Utc::now().timestamp()));
 
+        let started_at = self
+            .current_started_at
+            .lock()
+            .take()
+            .unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
+
         let dropped_frames = self
             .dropped_frames_counter
             .lock()
@@ -198,6 +288,29 @@ impl MasterRecorder {
             .unwrap_or(0);
 
         let write_errors = self.write_errors.load(Ordering::Relaxed);
+
+        let file_size_bytes = fs::metadata(&file_path).map(|m| m.len()).unwrap_or(0);
+        let filename = PathBuf::from(&file_path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("recording.wav")
+            .to_string();
+
+        let history_entry = RecordingHistoryItem {
+            id: session_id.clone(),
+            filename,
+            file_path: file_path.clone(),
+            started_at,
+            duration_seconds,
+            file_size_bytes,
+            status: "completed".to_string(),
+        };
+
+        {
+            let mut hist = self.history.write();
+            hist.insert(0, history_entry);
+        }
+        self.save_history();
 
         Ok(RecordingResult {
             id: session_id,
@@ -257,6 +370,22 @@ impl MasterRecorder {
             write_errors,
         }
     }
+
+    pub fn open_folder(path: &str) -> Result<(), String> {
+        #[cfg(target_os = "windows")]
+        {
+            std::process::Command::new("explorer")
+                .arg(path)
+                .spawn()
+                .map_err(|e| format!("Failed to open directory with explorer: {}", e))?;
+            Ok(())
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = path;
+            Ok(())
+        }
+    }
 }
 
 #[cfg(test)]
@@ -270,7 +399,7 @@ mod tests {
         let (tx, rx) = bounded(16);
         let dropped = Arc::new(AtomicU64::new(0));
 
-        let temp_dir = std::env::temp_dir().join("broadcst_test_recordings");
+        let temp_dir = std::env::temp_dir().join("broadcst_test_recordings_mod");
         let sub = MasterTapSubscription {
             receiver: rx,
             dropped_frames: dropped,

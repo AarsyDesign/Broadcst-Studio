@@ -251,9 +251,21 @@ class IPCService {
       case 'deck.play':
       case 'deck.pause':
       case 'deck.stop':
+      case 'deck.restart':
+      case 'deck.unload':
       case 'deck.seek':
+      case 'deck.set_cue_position':
+      case 'deck.return_to_cue':
+      case 'deck.start_from_cue':
+      case 'deck.set_cue':
+      case 'deck.set_gain':
+      case 'deck.set_mute':
+      case 'deck.trigger_transition':
       case 'deck.set_crossfader':
       case 'deck.set_auto_advance':
+      case 'deck.set_monitor_source':
+      case 'deck.set_cue_gain':
+      case 'deck.set_cue_muted':
         return undefined;
 
       case 'playback.get_snapshot': {
@@ -266,7 +278,11 @@ class IPCService {
             positionMs: 0,
             durationMs: 0,
             remainingMs: 0,
+            playbackPercent: 0,
+            cuePositionMs: 0,
             volume: 1.0,
+            gainDb: 0.0,
+            muted: false,
             cue: false,
             looping: false,
           },
@@ -278,14 +294,22 @@ class IPCService {
             positionMs: 0,
             durationMs: 0,
             remainingMs: 0,
+            playbackPercent: 0,
+            cuePositionMs: 0,
             volume: 1.0,
+            gainDb: 0.0,
+            muted: false,
             cue: false,
             looping: false,
           },
           activeDeck: 'deck_a',
           crossfader: 0.0,
           autoAdvance: true,
+          monitorSource: 'master',
+          cueGainDb: 0.0,
+          cueMuted: false,
           currentTrack: null,
+          nowPlaying: null,
           isMonitoring: false,
           monitorDevice: null,
           broadcastState: 'OFFLINE',
@@ -293,11 +317,24 @@ class IPCService {
         };
       }
 
-      case 'playlist.get': {
+      case 'playlist.get':
+      case 'playlist.get_library':
+      case 'playlist.scan_folder':
+      case 'playlist.search': {
         return [];
       }
 
-      case 'playlist.add_file': {
+      case 'playlist.remove_missing': {
+        return 0;
+      }
+
+      case 'playlist.toggle_pinned':
+      case 'playlist.reorder': {
+        return true;
+      }
+
+      case 'playlist.add_file':
+      case 'playlist.insert_next': {
         return {
           id: `pl-${Date.now()}`,
           filePath: params?.filePath ?? '',
@@ -323,6 +360,18 @@ class IPCService {
           artist: 'Queued Artist',
           durationMs: 240000,
         };
+      }
+
+      case 'recording.get_history': {
+        return [];
+      }
+
+      case 'recording.open_folder': {
+        return undefined;
+      }
+
+      case 'broadcast.preflight_validate': {
+        return [];
       }
 
       case 'control.action': {

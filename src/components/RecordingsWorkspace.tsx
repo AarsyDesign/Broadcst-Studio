@@ -27,11 +27,13 @@ export const RecordingsWorkspace: React.FC = () => {
       }
     });
 
-    // Auto-select first session if available
-    const existing = recorderService.getSessions();
-    if (existing.length > 0 && !selectedSessionId) {
-      setSelectedSessionId(existing[0].id);
-    }
+    // Fetch authoritative native recording history
+    recorderService.fetchHistory().then((sess) => {
+      setSessions(sess);
+      if (sess.length > 0 && !selectedSessionId) {
+        setSelectedSessionId(sess[0].id);
+      }
+    });
 
     return () => {
       unsubState();
@@ -190,6 +192,15 @@ export const RecordingsWorkspace: React.FC = () => {
               </span>
             </div>
           )}
+
+          <button
+            type="button"
+            className="ws-secondary-action"
+            onClick={() => recorderService.openRecordingFolder()}
+            title="Open recorded WAV files directory in Windows Explorer"
+          >
+            Open Folder
+          </button>
 
           <button
             type="button"

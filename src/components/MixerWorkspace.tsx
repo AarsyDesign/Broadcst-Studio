@@ -79,16 +79,39 @@ export const MixerWorkspace: React.FC = () => {
         {mixerState.channels.map((channel: AudioChannelStrip) => {
           const meter = levels[channel.id] || { peak: channel.peakDb ?? -90, rms: channel.rmsDb ?? -90 };
           const meterLevel = `${dbToUnit(meter.rms) * 100}%`;
+          const isOverload = meter.peak >= -0.5;
           const danger = meter.peak >= -3;
+
+          let sourceState: 'ACTIVE' | 'SILENT' | 'UNAVAILABLE' = 'SILENT';
+          if (channel.muted) {
+            sourceState = 'UNAVAILABLE';
+          } else if (meter.peak > -50) {
+            sourceState = 'ACTIVE';
+          } else {
+            sourceState = 'SILENT';
+          }
 
           return (
             <div className="ws-strip" key={channel.id}>
               <div className="ws-strip-head">
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <span className="ws-strip-source">{channel.sourceType.replace('_', ' ')}</span>
-                  <span className="ws-tag">→ MASTER</span>
+                  <span
+                    className="ws-badge"
+                    data-variant={sourceState === 'ACTIVE' ? 'live' : sourceState === 'SILENT' ? 'neutral' : 'warning'}
+                    style={{ fontSize: '9px', padding: '1px 5px' }}
+                  >
+                    {sourceState}
+                  </span>
                 </div>
-                <span className="ws-strip-name">{channel.name}</span>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span className="ws-strip-name">{channel.name}</span>
+                  {isOverload && <span className="ws-tag" style={{ color: 'var(--ws-danger)', borderColor: 'var(--ws-danger)' }}>OVERLOAD</span>}
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9px', fontFamily: 'var(--font-mono)', color: 'var(--ws-subtle)' }}>
+                  <span>P: {meter.peak.toFixed(1)} dB</span>
+                  <span>R: {meter.rms.toFixed(1)} dB</span>
+                </div>
               </div>
 
               <div className="ws-strip-gain">
@@ -161,10 +184,14 @@ export const MixerWorkspace: React.FC = () => {
                 className="ws-badge"
                 data-variant={mixerState.masterPeakDb >= -0.5 ? 'danger' : mixerState.masterPeakDb >= -3 ? 'warning' : 'live'}
               >
-                {mixerState.masterPeakDb >= -0.5 ? 'CLIP' : 'OK'}
+                {mixerState.masterPeakDb >= -0.5 ? 'OVERLOAD' : mixerState.masterPeakDb > -50 ? 'ACTIVE' : 'SILENT'}
               </span>
             </div>
             <span className="ws-strip-name">Master Output</span>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9px', fontFamily: 'var(--font-mono)', color: 'var(--ws-subtle)' }}>
+              <span>P: {mixerState.masterPeakDb.toFixed(1)} dB</span>
+              <span>R: {mixerState.masterRmsDb.toFixed(1)} dB</span>
+            </div>
           </div>
 
           <div className="ws-strip-gain">

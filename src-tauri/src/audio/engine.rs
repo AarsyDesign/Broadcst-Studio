@@ -266,6 +266,7 @@ impl AudioEngine {
             let mut aux_block = vec![0.0f32; PROCESSING_BLOCK_SAMPLES];
             let mut sfx_block = vec![0.0f32; PROCESSING_BLOCK_SAMPLES];
             let mut master_sum = vec![0.0f32; PROCESSING_BLOCK_SAMPLES];
+            let mut block_counter: u64 = 0;
 
             while is_running.load(Ordering::Relaxed) {
                 let start_time = std::time::Instant::now();
@@ -356,8 +357,30 @@ impl AudioEngine {
                 // 8. Process Master bus (gain + soft limiter)
                 master.process_master(&mut master_sum);
 
-                // 9. Feed hardware output monitor stream
-                monitor.push_master_samples(&master_sum);
+                // Preload check every ~50 blocks (500ms)
+                if block_counter % 50 == 0 {
+                    playback.check_and_preload();
+                }
+                block_counter = block_counter.wrapping_add(1);
+
+                // 9. Feed hardware output monitor stream (Program Master or CUE)
+                if playback.monitor_source() == "cue" {
+                    let mut cue_sum = vec![0.0f32; PROCESSING_BLOCK_SAMPLES];
+                    let cue_a = playback.deck_a.is_cue();
+                    let cue_b = playback.deck_b.is_cue();
+                    if !playback.is_cue_muted() {
+                        let cue_gain = 10.0f32.powf(playback.cue_gain_db() / 20.0);
+                        for i in 0..PROCESSING_BLOCK_SAMPLES {
+                            let mut sample = 0.0f32;
+                            if cue_a { sample += deck_a_block[i]; }
+                            if cue_b { sample += deck_b_block[i]; }
+                            cue_sum[i] = (sample * cue_gain).clamp(-1.0, 1.0);
+                        }
+                    }
+                    monitor.push_master_samples(&cue_sum);
+                } else {
+                    monitor.push_master_samples(&master_sum);
+                }
 
                 // 10. Distribute to master output tap subscribers (encoder & recorder)
                 {
