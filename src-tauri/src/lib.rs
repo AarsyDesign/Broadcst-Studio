@@ -1,13 +1,20 @@
+pub mod audio;
 pub mod commands;
+pub mod encoder;
 pub mod models;
+pub mod recording;
+pub mod shoutcast;
+pub mod state;
 
 use commands::*;
+use state::AppState;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let _ = tracing_subscriber::fmt::try_init();
 
     tauri::Builder::default()
+        .manage(AppState::new())
         .invoke_handler(tauri::generate_handler![
             broadcast_start,
             broadcast_stop,

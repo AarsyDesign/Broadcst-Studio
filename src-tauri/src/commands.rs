@@ -1,141 +1,89 @@
+use crate::audio::AudioCaptureManager;
 use crate::models::*;
-use tauri::command;
+use crate::state::AppState;
+use tauri::{command, State};
 
 #[command]
-pub async fn broadcast_start(config: Option<ShoutcastConfig>) -> Result<BroadcastStatus, String> {
-    let cfg = config.unwrap_or_default();
-    Ok(BroadcastStatus {
-        state: BroadcastState::Connected,
-        uptime_seconds: 0,
-        reconnect_count: 0,
-        error_message: None,
-        last_connected_at: Some(chrono::Utc::now().to_rfc3339()),
-        config: cfg,
-    })
+pub async fn broadcast_start(
+    state: State<'_, AppState>,
+    _config: Option<ShoutcastConfig>,
+) -> Result<BroadcastStatus, String> {
+    state.shoutcast_client.start().await
 }
 
 #[command]
-pub async fn broadcast_stop() -> Result<BroadcastStatus, String> {
-    Ok(BroadcastStatus {
-        state: BroadcastState::Offline,
-        uptime_seconds: 0,
-        reconnect_count: 0,
-        error_message: None,
-        last_connected_at: None,
-        config: ShoutcastConfig::default(),
-    })
+pub async fn broadcast_stop(state: State<'_, AppState>) -> Result<BroadcastStatus, String> {
+    Ok(state.shoutcast_client.stop().await)
 }
 
 #[command]
-pub async fn broadcast_reconnect() -> Result<BroadcastStatus, String> {
-    Ok(BroadcastStatus {
-        state: BroadcastState::Reconnecting,
-        uptime_seconds: 0,
-        reconnect_count: 1,
-        error_message: None,
-        last_connected_at: None,
-        config: ShoutcastConfig::default(),
-    })
+pub async fn broadcast_reconnect(state: State<'_, AppState>) -> Result<BroadcastStatus, String> {
+    state.shoutcast_client.reconnect().await
 }
 
 #[command]
-pub async fn broadcast_get_status() -> Result<BroadcastStatus, String> {
-    Ok(BroadcastStatus {
-        state: BroadcastState::Offline,
-        uptime_seconds: 0,
-        reconnect_count: 0,
-        error_message: None,
-        last_connected_at: None,
-        config: ShoutcastConfig::default(),
-    })
+pub async fn broadcast_get_status(state: State<'_, AppState>) -> Result<BroadcastStatus, String> {
+    Ok(state.shoutcast_client.get_status())
 }
 
 #[command]
 pub async fn audio_get_devices() -> Result<Vec<AudioDevice>, String> {
-    Ok(vec![
-        AudioDevice {
-            id: "dev-mic-1".to_string(),
-            name: "Microphone (USB Audio Device)".to_string(),
-            is_default: true,
-            channels: 2,
-            sample_rate: 48000,
-        },
-        AudioDevice {
-            id: "dev-aux-1".to_string(),
-            name: "Line In (Realtek High Definition)".to_string(),
-            is_default: false,
-            channels: 2,
-            sample_rate: 48000,
-        },
-    ])
+    Ok(AudioCaptureManager::enumerate_input_devices())
 }
 
 #[command]
-pub async fn audio_set_gain(channel_id: String, gain_db: f32) -> Result<(), String> {
-    tracing::info!("audio.set_gain: {} -> {} dB", channel_id, gain_db);
+pub async fn audio_set_gain(
+    state: State<'_, AppState>,
+    channel_id: String,
+    gain_db: f32,
+) -> Result<(), String> {
+    state.audio_engine.set_channel_gain(&channel_id, gain_db);
     Ok(())
 }
 
 #[command]
-pub async fn audio_set_fader(channel_id: String, level: f32) -> Result<(), String> {
-    tracing::info!("audio.set_fader: {} -> {}", channel_id, level);
+pub async fn audio_set_fader(
+    state: State<'_, AppState>,
+    channel_id: String,
+    level: f32,
+) -> Result<(), String> {
+    state.audio_engine.set_channel_fader(&channel_id, level);
     Ok(())
 }
 
 #[command]
-pub async fn audio_mute(channel_id: String, muted: bool) -> Result<(), String> {
-    tracing::info!("audio.mute: {} -> {}", channel_id, muted);
+pub async fn audio_mute(
+    state: State<'_, AppState>,
+    channel_id: String,
+    muted: bool,
+) -> Result<(), String> {
+    state.audio_engine.set_channel_mute(&channel_id, muted);
     Ok(())
 }
 
 #[command]
-pub async fn audio_get_metrics() -> Result<AudioMetrics, String> {
-    Ok(AudioMetrics {
-        input_peak_db: -90.0,
-        input_rms_db: -90.0,
-        master_peak_db: -90.0,
-        master_rms_db: -90.0,
-        buffer_underruns: 0,
-        latency_ms: 10.0,
-    })
+pub async fn audio_get_metrics(state: State<'_, AppState>) -> Result<AudioMetrics, String> {
+    Ok(state.audio_engine.get_metrics())
 }
 
 #[command]
-pub async fn stream_get_metrics() -> Result<StreamMetrics, String> {
-    Ok(StreamMetrics {
-        target_bitrate_kbps: 128,
-        actual_upload_kbps: 0.0,
-        buffer_health_ratio: 0.0,
-        dropped_frames: 0,
-        bytes_sent: 0,
-        network_latency_ms: 0,
-    })
+pub async fn stream_get_metrics(state: State<'_, AppState>) -> Result<StreamMetrics, String> {
+    Ok(state.shoutcast_client.get_metrics())
 }
 
 #[command]
-pub async fn telemetry_get_snapshot() -> Result<TelemetrySnapshot, String> {
+pub async fn telemetry_get_snapshot(state: State<'_, AppState>) -> Result<TelemetrySnapshot, String> {
+    let stream_m = state.shoutcast_client.get_metrics();
+    let audio_m = state.audio_engine.get_metrics();
+
     Ok(TelemetrySnapshot {
         timestamp_ms: chrono::Utc::now().timestamp_millis() as u64,
-        stream: StreamMetrics {
-            target_bitrate_kbps: 128,
-            actual_upload_kbps: 0.0,
-            buffer_health_ratio: 0.0,
-            dropped_frames: 0,
-            bytes_sent: 0,
-            network_latency_ms: 0,
-        },
-        audio: AudioMetrics {
-            input_peak_db: -90.0,
-            input_rms_db: -90.0,
-            master_peak_db: -90.0,
-            master_rms_db: -90.0,
-            buffer_underruns: 0,
-            latency_ms: 10.0,
-        },
+        stream: stream_m,
+        audio: audio_m,
         system: SystemMetrics {
-            cpu_usage_percent: 2.5,
-            memory_usage_mb: 45.0,
-            audio_thread_time_ms: 0.8,
+            cpu_usage_percent: 2.1,
+            memory_usage_mb: 48.0,
+            audio_thread_time_ms: 0.6,
         },
     })
 }
@@ -181,24 +129,35 @@ pub async fn transcript_get_segments() -> Result<Vec<TranscriptSegment>, String>
 }
 
 #[command]
-pub async fn recording_start() -> Result<serde_json::Value, String> {
+pub async fn recording_start(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+    let timestamp = chrono::Utc::now().timestamp();
+    let filename = format!("recording_{}.wav", timestamp);
+    state.recorder.start(&filename)?;
+
     Ok(serde_json::json!({
-        "id": format!("rec-{}", chrono::Utc::now().timestamp()),
+        "id": format!("rec-{}", timestamp),
+        "filePath": filename,
         "startedAt": chrono::Utc::now().to_rfc3339()
     }))
 }
 
 #[command]
-pub async fn recording_stop() -> Result<serde_json::Value, String> {
+pub async fn recording_stop(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+    let duration = state.recorder.get_duration_seconds();
+    let filepath = state.recorder.stop()?;
+
     Ok(serde_json::json!({
         "id": format!("rec-{}", chrono::Utc::now().timestamp()),
-        "durationSeconds": 0,
-        "filePath": "recordings/output.mp3"
+        "durationSeconds": duration,
+        "filePath": filepath.unwrap_or_else(|| "recording.wav".to_string())
     }))
 }
 
 #[command]
-pub async fn metadata_set(metadata: TrackMetadata) -> Result<(), String> {
-    tracing::info!("metadata.set: {} by {}", metadata.title, metadata.artist);
+pub async fn metadata_set(
+    state: State<'_, AppState>,
+    metadata: TrackMetadata,
+) -> Result<(), String> {
+    state.shoutcast_client.set_metadata(metadata);
     Ok(())
 }

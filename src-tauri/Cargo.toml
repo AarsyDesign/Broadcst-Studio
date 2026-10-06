@@ -17,6 +17,11 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 thiserror = "1.0"
 chrono = { version = "0.4", features = ["serde"] }
+cpal = "0.15"
+hound = "3.5"
+parking_lot = "0.12"
+crossbeam-channel = "0.5"
+byteorder = "1.5"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
