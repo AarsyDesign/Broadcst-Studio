@@ -19,20 +19,11 @@ import { TranscriptSegment, TranscriptStatus } from './types/transcript';
 
 export const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<WorkspaceTab>('on_air');
-  const [isNative, setIsNative] = useState<boolean>(false);
+  const [isNative, setIsNative] = useState(false);
   const [theme, setTheme] = useState<'dark' | 'light'>(() => {
     const saved = localStorage.getItem('broadcast_theme');
     return saved === 'light' ? 'light' : 'dark';
   });
-
-  useEffect(() => {
-    document.documentElement.setAttribute('data-theme', theme);
-    localStorage.setItem('broadcast_theme', theme);
-  }, [theme]);
-
-  const handleToggleTheme = () => {
-    setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
-  };
 
   const [status, setStatus] = useState<BroadcastStatus>({
     state: 'OFFLINE',
@@ -71,51 +62,55 @@ export const App: React.FC = () => {
   });
 
   const [transcriptSegments, setTranscriptSegments] = useState<TranscriptSegment[]>([]);
-  const [masterPeakDb, setMasterPeakDb] = useState<number>(-90);
-  const [masterRmsDb, setMasterRmsDb] = useState<number>(-90);
+  const [masterPeakDb, setMasterPeakDb] = useState(-90);
+  const [masterRmsDb, setMasterRmsDb] = useState(-90);
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('broadcast_theme', theme);
+  }, [theme]);
 
   useEffect(() => {
     setIsNative(ipc.isNative());
-    logger.info('App', 'App initialized, mounting IPC event listeners');
+    logger.info('App', 'Broadcast workstation mounted');
 
-    // Fetch initial status
-    ipc.invoke('broadcast.get_status').then((initStatus) => {
-      if (initStatus) setStatus(initStatus);
+    ipc.invoke('broadcast.get_status').then((value) => {
+      if (value) setStatus(value);
     });
 
-    ipc.invoke('transcript.get_segments').then((segs) => {
-      if (segs) setTranscriptSegments(segs);
+    ipc.invoke('transcript.get_segments').then((value) => {
+      if (value) setTranscriptSegments(value);
     });
 
-    // Subscribe to IPC events
-    const unsubStatus = ipc.on('broadcast.status.changed', (newStatus) => {
-      setStatus(newStatus);
-    });
-
-    const unsubMetrics = ipc.on('stream.metrics.changed', (newMetrics) => {
-      setMetrics(newMetrics);
-    });
-
-    const unsubAudio = ipc.on('audio.level.changed', (audioData) => {
-      if (audioData.channelId === 'master') {
-        setMasterPeakDb(audioData.peakDb);
-        setMasterRmsDb(audioData.rmsDb);
+    const unsubStatus = ipc.on('broadcast.status.changed', setStatus);
+    const unsubMetrics = ipc.on('stream.metrics.changed', setMetrics);
+    const unsubAudio = ipc.on('audio.level.changed', (data) => {
+      if (data.channelId === 'master') {
+        setMasterPeakDb(data.peakDb);
+        setMasterRmsDb(data.rmsDb);
       }
+    });
+    const unsubTranscript = ipc.on('transcript.segment.created', (segment) => {
+      setTranscriptSegments((prev) => {
+        const next = prev.filter((item) => item.id !== segment.id);
+        return [...next, segment];
+      });
     });
 
     return () => {
       unsubStatus();
       unsubMetrics();
       unsubAudio();
+      unsubTranscript();
     };
   }, []);
 
   const handleStartBroadcast = async () => {
     try {
-      const res = await ipc.invoke('broadcast.start');
-      setStatus(res);
-      await ipc.invoke('transcript.start');
-      setTranscriptStatus((prev) => ({ ...prev, state: 'LISTENING' }));
+      const next = await ipc.invoke('broadcast.start');
+      setStatus(next);
+      const transcript = await ipc.invoke('transcript.start');
+      setTranscriptStatus(transcript);
     } catch (err) {
       logger.error('Broadcast', 'Failed to start broadcast', { error: err });
     }
@@ -123,10 +118,10 @@ export const App: React.FC = () => {
 
   const handleStopBroadcast = async () => {
     try {
-      const res = await ipc.invoke('broadcast.stop');
-      setStatus(res);
-      await ipc.invoke('transcript.stop');
-      setTranscriptStatus((prev) => ({ ...prev, state: 'IDLE' }));
+      const next = await ipc.invoke('broadcast.stop');
+      setStatus(next);
+      const transcript = await ipc.invoke('transcript.stop');
+      setTranscriptStatus(transcript);
       setMasterPeakDb(-90);
       setMasterRmsDb(-90);
     } catch (err) {
@@ -136,108 +131,70 @@ export const App: React.FC = () => {
 
   const handleReconnect = async () => {
     try {
-      const res = await ipc.invoke('broadcast.reconnect');
-      setStatus(res);
+      const next = await ipc.invoke('broadcast.reconnect');
+      setStatus(next);
     } catch (err) {
       logger.error('Broadcast', 'Reconnect failed', { error: err });
     }
   };
 
+  const activeWorkspace = (() => {
+    switch (activeTab) {
+      case 'on_air':
+        return (
+          <OnAirWorkspace
+            status={status}
+            metrics={metrics}
+            transcriptStatus={transcriptStatus}
+            transcriptSegments={transcriptSegments}
+            masterPeakDb={masterPeakDb}
+            masterRmsDb={masterRmsDb}
+            onStartBroadcast={handleStartBroadcast}
+            onStopBroadcast={handleStopBroadcast}
+            onReconnect={handleReconnect}
+          />
+        );
+      case 'mixer':
+        return <MixerWorkspace />;
+      case 'sources':
+        return <SourcesWorkspace />;
+      case 'transcript':
+        return <TranscriptWorkspace />;
+      case 'schedule':
+        return <ScheduleWorkspace />;
+      case 'recordings':
+        return <RecordingsWorkspace />;
+      case 'plugins':
+        return <PluginsWorkspace />;
+      case 'automation':
+        return <AutomationWorkspace />;
+      case 'ai':
+        return <AIWorkspace />;
+      case 'settings':
+        return <SettingsWorkspace theme={theme} onSetTheme={setTheme} />;
+      case 'playlist':
+        return (
+          <div className="ws-workspace">
+            <div className="ws-kicker">Production</div>
+            <h1 className="ws-title">Playlist</h1>
+            <p className="ws-subtitle">Playlist workspace is reserved for the production queue and source sequencing.</p>
+            <div className="ws-command-prompt">Playlist data model will be connected to the native audio graph in the next implementation slice.</div>
+          </div>
+        );
+    }
+  })();
+
   return (
-    <div
-      data-theme={theme}
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        width: '100vw',
-        height: '100vh',
-        overflow: 'hidden',
-        backgroundColor: 'var(--color-bg)',
-      }}
-    >
+    <div className="ws-shell" data-theme={theme} style={{ width: '100vw', height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       <TopStatusBar
         status={status}
         isNative={isNative}
         theme={theme}
-        onToggleTheme={handleToggleTheme}
+        onToggleTheme={() => setTheme((current) => (current === 'dark' ? 'light' : 'dark'))}
       />
-
-      <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+      <div className="ws-app-grid">
         <NavigationRail activeTab={activeTab} onSelectTab={setActiveTab} />
-
-        <main style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-          {activeTab === 'on_air' && (
-            <OnAirWorkspace
-              status={status}
-              metrics={metrics}
-              transcriptStatus={transcriptStatus}
-              transcriptSegments={transcriptSegments}
-              masterPeakDb={masterPeakDb}
-              masterRmsDb={masterRmsDb}
-              onStartBroadcast={handleStartBroadcast}
-              onStopBroadcast={handleStopBroadcast}
-              onReconnect={handleReconnect}
-            />
-          )}
-
-          {activeTab === 'mixer' && <MixerWorkspace />}
-
-          {activeTab === 'sources' && <SourcesWorkspace />}
-
-          {activeTab === 'transcript' && <TranscriptWorkspace />}
-
-          {activeTab === 'schedule' && <ScheduleWorkspace />}
-
-          {activeTab === 'recordings' && <RecordingsWorkspace />}
-
-          {activeTab === 'plugins' && <PluginsWorkspace />}
-
-          {activeTab === 'automation' && <AutomationWorkspace />}
-
-          {activeTab === 'ai' && <AIWorkspace />}
-
-          {activeTab === 'settings' && (
-            <SettingsWorkspace theme={theme} onSetTheme={setTheme} />
-          )}
-
-          {activeTab !== 'on_air' &&
-            activeTab !== 'mixer' &&
-            activeTab !== 'sources' &&
-            activeTab !== 'schedule' &&
-            activeTab !== 'transcript' &&
-            activeTab !== 'recordings' &&
-            activeTab !== 'plugins' &&
-            activeTab !== 'automation' &&
-            activeTab !== 'ai' &&
-            activeTab !== 'settings' && (
-              <div
-                style={{
-                  flex: 1,
-                  padding: 'var(--space-6)',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: 'var(--space-4)',
-                  backgroundColor: 'var(--color-bg)',
-                }}
-              >
-                <h2 style={{ fontSize: 'var(--text-h2)', textTransform: 'uppercase' }}>
-                  {activeTab.replace('_', ' ')}
-                </h2>
-                <div
-                  style={{
-                    padding: 'var(--space-4)',
-                    backgroundColor: 'var(--color-surface)',
-                    border: '1px solid var(--color-border)',
-                    borderRadius: 'var(--radius-md)',
-                    color: 'var(--color-text-secondary)',
-                    fontSize: 'var(--text-small)',
-                  }}
-                >
-                  Workspace scheduled for subsequent phases. Core audio and broadcast pipelines are actively operational.
-                </div>
-              </div>
-            )}
-        </main>
+        <main className="ws-main">{activeWorkspace}</main>
       </div>
     </div>
   );
