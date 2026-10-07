@@ -23,11 +23,12 @@ Plugins interact with Broadcst Studio through the public, versioned **`@broadcst
 
 ## 2. Plugin Types
 
-Broadcst Studio organizes plugins into 5 architectural domains:
+Broadcst Studio organizes plugins into 6 architectural domains:
 
 | Plugin Type | Domain | Execution Model | Example Use Cases |
 | :--- | :--- | :--- | :--- |
 | **`AUDIO_PROCESSOR`** | Realtime DSP | Audio callback / worker | Dynamic voice levelers, parametric EQs, soft limiters, multiband compressors. |
+| **`OUTPUT`** | Stream Syndication | Async connection lifecycle | Telegram Live audio streams, RTMP relays, YouTube Live, Twitch, Discord voice bots. |
 | **`AUDIO_SOURCE`** | Audio Feed | Async provider | Podcast syndication feeds, remote Iceberg/HLS stream relays, rotation buckets. |
 | **`METADATA`** | Metadata & RDS | Event-driven | Webhook syndicators, Twitter/Discord now-playing announcers, AzuraCast bridges. |
 | **`AUTOMATION`** | Scheduling & Macros | Event-driven | Top-of-hour station ID injectors, sponsor pods, automatic playlist rotation. |
@@ -168,7 +169,81 @@ export interface AudioProcessorPlugin extends Plugin {
 
 ---
 
-## 7. Non-Realtime Plugins (Metadata, Automation, Utility)
+## 7. Output Plugins & Master Audio Syndication (`OutputPlugin`)
+
+Broadcst Studio introduces the **Output Plugin API** for syndicating master broadcast audio to external platforms (Telegram Live, RTMP relays, YouTube Live, Discord voice bots, Twitch) without hardcoding platform logic into the application core.
+
+### Master Audio Routing Boundary
+```
+MASTER AUDIO
+    ↓
+OUTPUT ROUTER
+    ├── Native SHOUTcast (First-class Rust native MP3/DNAS pipeline)
+    └── Plugin Outputs (Telegram Live, RTMP, community streamers)
+```
+
+- **Native SHOUTcast** remains the primary, low-latency broadcast transmission target implemented in Rust core (`lib.rs / shoutcast`).
+- **Output Plugins** implement connection lifecycle, destination configuration (stream keys, URLs), now-playing metadata updates, and status telemetry.
+- **Realtime Safety Boundary**: Raw PCM is not routed through React event buses. Output plugins manage connection negotiation, status, and control; their streaming worker interfaces with the native audio boundary.
+
+### Output Plugin Contract
+```typescript
+export interface OutputPlugin<TConfig = OutputPluginConfig> extends Plugin {
+  readonly manifest: PluginManifest & { type: 'OUTPUT' };
+  startOutput?(config?: TConfig): Promise<boolean> | boolean;
+  stopOutput?(): Promise<boolean> | boolean;
+  getOutputStatus(): OutputStatus;
+  updateMetadata?(metadata: { title: string; artist: string; album?: string }): Promise<void> | void;
+}
+```
+
+Output status distinguishes 5 deterministic states:
+- `DISCONNECTED`
+- `CONNECTING`
+- `CONNECTED`
+- `RECONNECTING`
+- `ERROR`
+
+---
+
+## 8. UI Extension API
+
+Plugins can contribute controlled UI panels into the workstation without gaining arbitrary DOM access or destroying the workstation design system.
+
+### Approved Extension Slots
+- **`OUTPUT_PANEL`**: Renders output target controls (e.g. Telegram Live streamer card).
+- **`SETTINGS_PANEL`**: Renders plugin-owned configuration surfaces.
+- **`ON_AIR_PANEL`**: Mounted alongside the on-air workstation broadcast telemetry.
+- **`INSPECTOR`**: Mounted in detail/metadata inspection sidebars.
+- **`TOOLBAR_ACTION`**: Compact workstation header actions.
+
+### Controlled UI Registration
+```typescript
+initialize(context: PluginContext) {
+  if (context.ui) {
+    this.unregisterUI = context.ui.registerPanel({
+      id: 'my-custom-output-panel',
+      slot: 'OUTPUT_PANEL',
+      title: 'Telegram Live Audio',
+      icon: 'Send',
+      description: 'Stream syndication to Telegram channel voice chat',
+      render: (uiContext) => (
+        <TelegramOutputPanel plugin={this} uiContext={uiContext} />
+      ),
+    });
+  }
+}
+```
+
+### Host Isolation & Design System Protection
+- **No Direct DOM**: Plugins do not receive `document.querySelector` or raw ReactDOM access.
+- **Workstation Design Tokens**: UI components are styled using `--ws-panel`, `--ws-live`, `--ws-text`, and standard `.ws-badge`, `.ws-tag`, `.ws-mini-action` classes.
+- **Error Boundary Isolation**: Each plugin UI extension is wrapped inside `<PluginUIErrorBoundary>`. If a plugin UI component throws, it displays a local error card without crashing On Air, Mixer, Decks, or navigation.
+- **Clean Lifecycle**: When a plugin is disabled or uninstalled, all its UI panels unmount immediately.
+
+---
+
+## 9. Non-Realtime Plugins (Metadata, Automation, Utility)
 
 Non-realtime plugins run outside the audio thread:
 - **`METADATA` & `AUTOMATION`**: Driven by safe events via `context.events.on('track.changed', ...)` or `context.events.on('schedule.triggered', ...)`.
@@ -176,53 +251,23 @@ Non-realtime plugins run outside the audio thread:
 
 ---
 
-## 8. Developer SDK (`@broadcst/plugin-sdk`)
+## 10. Developer SDK (`@broadcst/plugin-sdk`)
 
 Developers install or reference the SDK:
 ```bash
 npm install @broadcst/plugin-sdk
 ```
 
-### Writing a Plugin
-```typescript
-import {
-  definePlugin,
-  MetadataPlugin,
-  PluginContext,
-  TrackChangedEvent,
-} from '@broadcst/plugin-sdk';
-import manifest from './manifest.json';
-
-export const myPlugin: MetadataPlugin = definePlugin({
-  manifest,
-
-  initialize(context: PluginContext) {
-    context.logger.info('Initialized metadata plugin');
-  },
-
-  start() {
-    this.context.events.on('track.changed', (evt: TrackChangedEvent) => {
-      this.context.logger.info(`Now playing: ${evt.artist} - ${evt.title}`);
-    });
-  },
-
-  stop() {
-    // Teardown listeners
-  },
-});
-
-export default myPlugin;
-```
-
 ---
 
-## 9. Official Example Plugins
+## 11. Official Example Plugins
 
-The repository contains 4 reference implementations in `plugins/examples/`:
-1. **`example-audio-processor`**: Realtime soft limiter and gain trim demonstrating zero-allocation processing.
-2. **`example-metadata-sync`**: Event-driven track listener syndicating titles and storing persistent state.
-3. **`example-station-id-automation`**: Automated station identification macro triggered by program clocks.
-4. **`example-silence-detector`**: Utility background watchdog detecting dead air and firing emergency failovers.
+The repository contains 5 reference implementations in `plugins/examples/`:
+1. **`example-telegram-output`**: **Official Reference Output Plugin** demonstrating RTMP stream destination configuration, connection lifecycle, and controlled workstation UI contribution.
+2. **`example-audio-processor`**: Realtime soft limiter and gain trim demonstrating zero-allocation processing.
+3. **`example-metadata-sync`**: Event-driven track listener syndicating titles and storing persistent state.
+4. **`example-station-id-automation`**: Automated station identification macro triggered by program clocks.
+5. **`example-silence-detector`**: Utility background watchdog detecting dead air and firing emergency failovers.
 
 ---
 

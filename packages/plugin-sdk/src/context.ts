@@ -1,5 +1,6 @@
 import { PluginEventListener, PluginEventMap, PluginEventName } from './events';
 import { PluginManifest } from './manifest';
+import { UIExtensionDescriptor } from './types';
 
 export interface PluginLogger {
   debug(message: string, meta?: unknown): void;
@@ -15,6 +16,15 @@ export interface PluginEventBus {
 
 export interface PluginCommandExecutor {
   execute<TResult = unknown>(command: string, params?: unknown): Promise<TResult>;
+}
+
+/**
+ * Controlled UI registration interface for plugins.
+ * Plugins contribute UI descriptors without direct DOM or React tree access.
+ */
+export interface PluginUIController {
+  registerPanel(descriptor: Omit<UIExtensionDescriptor, 'pluginId'>): () => void;
+  getRegistrations(): UIExtensionDescriptor[];
 }
 
 /**
@@ -54,6 +64,8 @@ export interface PluginContext {
    * NOTE: Current host implementation provides in-memory session state.
    */
   readonly state: PluginStateStore;
+  /** Controlled UI extension registrar (requires 'ui.contribute' permission) */
+  readonly ui?: PluginUIController;
   /** Current station audio metrics (available if 'audio.read' permission granted) */
   getAudioMetrics?(): AudioMetricsReadout;
 }

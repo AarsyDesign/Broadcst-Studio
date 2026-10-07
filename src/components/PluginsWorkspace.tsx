@@ -7,11 +7,14 @@ import {
   ValidationResult,
   validateManifest,
 } from '../services/plugin/types';
+import { outputRouter, PluginOutputTarget } from '../services/plugin/outputRouter';
+import { PluginUISlotRenderer } from './PluginUISlotRenderer';
 
 export const PluginsWorkspace: React.FC = () => {
-  const [activeSubTab, setActiveSubTab] = useState<'installed' | 'sideload' | 'samples'>('installed');
+  const [activeSubTab, setActiveSubTab] = useState<'installed' | 'outputs' | 'sideload' | 'samples'>('installed');
   const [plugins, setPlugins] = useState<PluginInstance[]>(pluginHost.getPlugins());
   const [samples, setSamples] = useState<SamplePluginEntry[]>(pluginRegistry.getAvailableSamples());
+  const [pluginOutputs, setPluginOutputs] = useState<PluginOutputTarget[]>(() => outputRouter.getPluginOutputs());
   const [selectedType, setSelectedType] = useState<string>('all');
   const [selectedStatus, setSelectedStatus] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -30,8 +33,13 @@ export const PluginsWorkspace: React.FC = () => {
       setSamples(pluginRegistry.getAvailableSamples());
     });
 
+    const unsubOut = outputRouter.subscribe(() => {
+      setPluginOutputs(outputRouter.getPluginOutputs());
+    });
+
     return () => {
       unsubReg();
+      unsubOut();
     };
   }, []);
 
@@ -109,7 +117,7 @@ export const PluginsWorkspace: React.FC = () => {
     }
   };
 
-  const handleLoadTemplate = (templateType: 'processor' | 'metadata' | 'automation' | 'utility') => {
+  const handleLoadTemplate = (templateType: 'processor' | 'output' | 'metadata' | 'automation' | 'utility') => {
     let tpl: Partial<PluginManifest>;
     if (templateType === 'processor') {
       tpl = {
@@ -147,6 +155,18 @@ export const PluginsWorkspace: React.FC = () => {
         permissions: ['automation.read', 'automation.execute'],
         entryPoint: 'index.js',
       };
+    } else if (templateType === 'output') {
+      tpl = {
+        id: 'com.developer.custom-rtmp-output',
+        name: 'Custom RTMP Audio Streamer',
+        version: '1.0.0',
+        apiVersion: 1,
+        author: 'Broadcaster',
+        description: 'Syndicates master broadcast audio to RTMP endpoint with UI control panel.',
+        type: 'OUTPUT',
+        permissions: ['output.manage', 'metadata.read', 'ui.contribute'],
+        entryPoint: 'index.js',
+      };
     } else {
       tpl = {
         id: 'com.developer.level-watchdog',
@@ -165,6 +185,7 @@ export const PluginsWorkspace: React.FC = () => {
 
   const PLUGIN_TYPES: { id: string; label: string }[] = [
     { id: 'all', label: 'All Extension Types' },
+    { id: 'OUTPUT', label: 'Output & Streaming' },
     { id: 'AUDIO_PROCESSOR', label: 'Audio Processor (Realtime)' },
     { id: 'AUDIO_SOURCE', label: 'Audio Source' },
     { id: 'METADATA', label: 'Metadata & Syndication' },
@@ -229,6 +250,14 @@ export const PluginsWorkspace: React.FC = () => {
               onClick={() => setActiveSubTab('installed')}
             >
               Installed ({plugins.length})
+            </button>
+            <button
+              type="button"
+              className="ws-tab-btn"
+              data-active={activeSubTab === 'outputs'}
+              onClick={() => setActiveSubTab('outputs')}
+            >
+              Outputs & UI Panels ({pluginOutputs.length})
             </button>
             <button
               type="button"
@@ -483,6 +512,18 @@ export const PluginsWorkspace: React.FC = () => {
                           </button>
                         )}
 
+                        {isRunning && (
+                          <button
+                            type="button"
+                            className="ws-secondary-action"
+                            style={{ height: '30px', fontSize: '11px' }}
+                            onClick={() => handleReloadPlugin(p.manifest.id)}
+                            title="Hot-reload plugin without restart"
+                          >
+                            Reload
+                          </button>
+                        )}
+
                         <button
                           type="button"
                           className={isRunning ? 'ws-secondary-action' : 'ws-primary-action'}
@@ -518,6 +559,159 @@ export const PluginsWorkspace: React.FC = () => {
               })}
             </div>
           )}
+        </div>
+      )}
+
+      {/* SUBTAB 2: OUTPUT TARGETS & UI EXTENSIONS */}
+      {activeSubTab === 'outputs' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+          {/* Architecture Concept Header */}
+          <div
+            style={{
+              padding: '14px 16px',
+              borderRadius: '7px',
+              background: 'var(--ws-panel)',
+              border: '1px solid var(--ws-line)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '6px',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span className="ws-strip-source">MASTER AUDIO ROUTER</span>
+                <strong style={{ fontSize: '13px', color: 'var(--ws-text)' }}>
+                  Extensible Output Syndication Architecture
+                </strong>
+              </div>
+              <span className="ws-tag" style={{ color: 'var(--ws-live)' }}>
+                CORE → ROUTER → TARGETS
+              </span>
+            </div>
+            <p style={{ margin: 0, fontSize: '11.5px', color: 'var(--ws-muted)', lineHeight: 1.5 }}>
+              Broadcst Studio separates native transmission from plugin syndication. <strong>SHOUTcast</strong> runs as first-class low-latency native C/Rust code. Third-party destinations (e.g. <strong>Telegram Live</strong>, RTMP, YouTube) are managed through the <strong>OutputPlugin</strong> contract without hardcoding service logic into core.
+            </p>
+          </div>
+
+          {/* Configured Output Targets List */}
+          <div
+            style={{
+              padding: '14px 16px',
+              borderRadius: '7px',
+              background: 'var(--ws-panel)',
+              border: '1px solid var(--ws-line)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '10px',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <strong style={{ fontSize: '13px', color: 'var(--ws-text)' }}>
+                Registered Audio Syndication Targets ({pluginOutputs.length + 1})
+              </strong>
+              <span className="ws-tag">1 NATIVE + {pluginOutputs.length} PLUGINS</span>
+            </div>
+
+            {/* Native SHOUTcast summary row */}
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                padding: '10px 12px',
+                background: 'var(--ws-panel-2)',
+                border: '1px solid var(--ws-line)',
+                borderRadius: '6px',
+              }}
+            >
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <strong style={{ fontSize: '12px', color: 'var(--ws-text)' }}>SHOUTcast DNAS 2.6+</strong>
+                  <span className="ws-tag" style={{ color: 'var(--ws-live)' }}>NATIVE CORE</span>
+                </div>
+                <div style={{ fontSize: '10.5px', color: 'var(--ws-muted)', marginTop: '2px', fontFamily: 'var(--font-mono)' }}>
+                  Primary high-performance MP3 broadcast encoder & transmitter
+                </div>
+              </div>
+              <span className="ws-badge" data-variant="live">CORE RUNTIME</span>
+            </div>
+
+            {/* Plugin Output Targets */}
+            {pluginOutputs.map((target) => (
+              <div
+                key={target.pluginId}
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  padding: '10px 12px',
+                  background: 'var(--ws-panel-2)',
+                  border: '1px solid var(--ws-line)',
+                  borderRadius: '6px',
+                }}
+              >
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <strong style={{ fontSize: '12px', color: 'var(--ws-text)' }}>{target.name}</strong>
+                    <span className="ws-tag">PLUGIN OUTPUT</span>
+                  </div>
+                  <div style={{ fontSize: '10.5px', color: 'var(--ws-muted)', marginTop: '2px', fontFamily: 'var(--font-mono)' }}>
+                    {target.status.destinationName} • {target.status.targetEndpoint || 'RTMP/Syndication Target'}
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span
+                    className="ws-badge"
+                    data-variant={target.status.state === 'CONNECTED' ? 'live' : target.status.state === 'CONNECTING' ? 'warning' : 'neutral'}
+                  >
+                    {target.status.state}
+                  </span>
+                  <button
+                    type="button"
+                    className={target.status.state === 'CONNECTED' ? 'ws-secondary-action' : 'ws-primary-action'}
+                    style={{ height: '28px', fontSize: '10.5px' }}
+                    onClick={async () => {
+                      if (target.status.state === 'CONNECTED') {
+                        await outputRouter.stopOutput(target.pluginId);
+                        showToast(`Stopped output: ${target.name}`);
+                      } else {
+                        await outputRouter.startOutput(target.pluginId);
+                        showToast(`Started output: ${target.name}`);
+                      }
+                    }}
+                  >
+                    {target.status.state === 'CONNECTED' ? 'Disconnect' : 'Connect Target'}
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Plugin Contributed UI Panels Section */}
+          <div
+            style={{
+              padding: '14px 16px',
+              borderRadius: '7px',
+              background: 'var(--ws-panel)',
+              border: '1px solid var(--ws-line)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '12px',
+            }}
+          >
+            <div>
+              <strong style={{ fontSize: '13px', color: 'var(--ws-text)' }}>
+                Plugin UI Extensions Surface
+              </strong>
+              <p style={{ margin: '3px 0 0', fontSize: '11px', color: 'var(--ws-muted)' }}>
+                Controlled UI panels contributed by active plugins. Components are isolated by ErrorBoundaries and styled via workstation design tokens.
+              </p>
+            </div>
+
+            <PluginUISlotRenderer slot="OUTPUT_PANEL" onNotify={showToast} />
+            <PluginUISlotRenderer slot="SETTINGS_PANEL" onNotify={showToast} />
+          </div>
         </div>
       )}
 
@@ -571,6 +765,13 @@ export const PluginsWorkspace: React.FC = () => {
                   onClick={() => handleLoadTemplate('automation')}
                 >
                   Automation Macro
+                </button>
+                <button
+                  type="button"
+                  className="ws-mini-action"
+                  onClick={() => handleLoadTemplate('output')}
+                >
+                  Output Streamer
                 </button>
                 <button
                   type="button"

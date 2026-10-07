@@ -7,6 +7,8 @@ import { BroadcastStatus } from '../types/broadcast';
 import { StreamMetrics } from '../types/telemetry';
 import { TranscriptSegment, TranscriptStatus } from '../types/transcript';
 import { BroadcastPreflightError, FullPlaybackSnapshot, PlaylistItem } from '../types/ipc';
+import { outputRouter, PluginOutputTarget } from '../services/plugin/outputRouter';
+import { PluginUISlotRenderer } from './PluginUISlotRenderer';
 
 interface OnAirWorkspaceProps {
   status: BroadcastStatus;
@@ -66,6 +68,7 @@ export const OnAirWorkspace: React.FC<OnAirWorkspaceProps> = ({
   const [preflightErrors, setPreflightErrors] = useState<BroadcastPreflightError[]>([]);
   const [showPreflightModal, setShowPreflightModal] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [pluginOutputs, setPluginOutputs] = useState<PluginOutputTarget[]>(() => outputRouter.getPluginOutputs());
 
   useEffect(() => {
     let mounted = true;
@@ -90,10 +93,17 @@ export const OnAirWorkspace: React.FC<OnAirWorkspaceProps> = ({
       setRecordDuration(dur);
     });
 
+    const unsubOutputs = outputRouter.subscribe(() => {
+      if (mounted) {
+        setPluginOutputs(outputRouter.getPluginOutputs());
+      }
+    });
+
     return () => {
       mounted = false;
       unsubSnap();
       unsubRec();
+      unsubOutputs();
     };
   }, []);
 
@@ -909,9 +919,76 @@ export const OnAirWorkspace: React.FC<OnAirWorkspaceProps> = ({
                 <strong>{formatBytes(metrics.bytesSent)}</strong>
               </div>
             </div>
+
+            {/* Plugin-Provided Output Syndication Targets */}
+            {pluginOutputs.length > 0 && (
+              <div style={{ marginTop: '14px', borderTop: '1px solid var(--ws-line)', paddingTop: '10px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <span className="ws-strip-source">PLUGIN OUTPUTS</span>
+                    <span className="ws-tag">{pluginOutputs.length} TARGETS</span>
+                  </div>
+                  <span style={{ fontSize: '10px', color: 'var(--ws-muted)' }}>
+                    Extensible Stream Syndication
+                  </span>
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  {pluginOutputs.map((out) => (
+                    <div
+                      key={out.pluginId}
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        padding: '6px 10px',
+                        background: 'var(--ws-panel-2)',
+                        border: '1px solid var(--ws-line)',
+                        borderRadius: '4px',
+                      }}
+                    >
+                      <div>
+                        <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--ws-text)' }}>
+                          {out.name}
+                        </div>
+                        <div style={{ fontSize: '10px', color: 'var(--ws-muted)', fontFamily: 'var(--font-mono)' }}>
+                          {out.status.destinationName} • {out.status.targetEndpoint || 'Endpoint'}
+                        </div>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <span
+                          className="ws-badge"
+                          data-variant={out.status.state === 'CONNECTED' ? 'live' : out.status.state === 'CONNECTING' ? 'warning' : 'neutral'}
+                          style={{ fontSize: '9px' }}
+                        >
+                          {out.status.state}
+                        </span>
+                        {out.status.state === 'CONNECTED' && (
+                          <span style={{ fontSize: '10px', fontFamily: 'var(--font-mono)', color: 'var(--ws-muted)' }}>
+                            {out.status.uptimeSeconds}s
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </section>
       </div>
+
+      {/* Plugin Contributed UI Panels for On Air */}
+      <PluginUISlotRenderer
+        slot="ON_AIR_PANEL"
+        onNotify={showToast}
+        style={{ marginTop: '14px' }}
+      />
+      <PluginUISlotRenderer
+        slot="OUTPUT_PANEL"
+        onNotify={showToast}
+        style={{ marginTop: '14px' }}
+      />
 
       {/* Broadcast Preflight Validation Modal */}
       {showPreflightModal && (

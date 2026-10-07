@@ -14,6 +14,7 @@ import { voiceProcessorPlugin } from '../../../plugins/examples/example-audio-pr
 import { metadataSyncPlugin } from '../../../plugins/examples/example-metadata-sync';
 import { stationIdAutomationPlugin } from '../../../plugins/examples/example-station-id-automation';
 import { silenceDetectorPlugin } from '../../../plugins/examples/example-silence-detector';
+import { telegramOutputPlugin } from '../../../plugins/examples/example-telegram-output';
 
 export interface SamplePluginEntry {
   manifest: PluginManifest;
@@ -25,6 +26,11 @@ const LOCAL_SAMPLE_PLUGINS: SamplePluginEntry[] = [
   {
     manifest: voiceProcessorPlugin.manifest,
     plugin: voiceProcessorPlugin,
+    isOfficialExample: true,
+  },
+  {
+    manifest: telegramOutputPlugin.manifest,
+    plugin: telegramOutputPlugin as any,
     isOfficialExample: true,
   },
   {
@@ -172,6 +178,12 @@ class PluginRegistry {
 
   public async disablePlugin(pluginId: string): Promise<boolean> {
     const ok = await pluginHost.disablePlugin(pluginId);
+    this.notify();
+    return ok;
+  }
+
+  public async reloadPlugin(pluginId: string): Promise<boolean> {
+    const ok = await pluginHost.reloadPlugin(pluginId);
     this.notify();
     return ok;
   }

@@ -33,6 +33,16 @@ export const COMMAND_PERMISSION_MAP: Record<string, PluginPermission> = {
   'recording.start': 'automation.execute',
   'recording.stop': 'automation.execute',
 
+  // Output syndication actions
+  'output.start': 'output.manage',
+  'output.stop': 'output.manage',
+  'output.configure': 'output.manage',
+  'output.get_status': 'output.manage',
+
+  // UI contribution actions
+  'ui.register': 'ui.contribute',
+  'ui.unregister': 'ui.contribute',
+
   // Direct short action aliases
   PLAY_DECK: 'automation.execute',
   NEXT_TRACK: 'automation.execute',
@@ -41,6 +51,8 @@ export const COMMAND_PERMISSION_MAP: Record<string, PluginPermission> = {
   STOP_RECORDING: 'automation.execute',
   SET_FADER: 'audio.write',
   SET_MUTE: 'audio.write',
+  START_OUTPUT: 'output.manage',
+  STOP_OUTPUT: 'output.manage',
 };
 
 /**

@@ -5,6 +5,7 @@
 export type PluginType =
   | 'AUDIO_SOURCE'
   | 'AUDIO_PROCESSOR'
+  | 'OUTPUT'
   | 'METADATA'
   | 'AUTOMATION'
   | 'UTILITY';
@@ -12,6 +13,7 @@ export type PluginType =
 export const ALL_PLUGIN_TYPES: readonly PluginType[] = [
   'AUDIO_SOURCE',
   'AUDIO_PROCESSOR',
+  'OUTPUT',
   'METADATA',
   'AUTOMATION',
   'UTILITY',
@@ -20,17 +22,20 @@ export const ALL_PLUGIN_TYPES: readonly PluginType[] = [
 export type PluginPermission =
   | 'audio.read'
   | 'audio.write'
+  | 'output.manage'
   | 'metadata.read'
   | 'metadata.write'
   | 'filesystem.read'
   | 'filesystem.write'
   | 'network'
   | 'automation.read'
-  | 'automation.execute';
+  | 'automation.execute'
+  | 'ui.contribute';
 
 export const ALL_PLUGIN_PERMISSIONS: readonly PluginPermission[] = [
   'audio.read',
   'audio.write',
+  'output.manage',
   'metadata.read',
   'metadata.write',
   'filesystem.read',
@@ -38,6 +43,7 @@ export const ALL_PLUGIN_PERMISSIONS: readonly PluginPermission[] = [
   'network',
   'automation.read',
   'automation.execute',
+  'ui.contribute',
 ] as const;
 
 export type PluginLifecycleState =
@@ -112,6 +118,18 @@ export const PERMISSION_CAPABILITY_MAP: Record<PluginPermission, PluginCapabilit
     description: 'External HTTP/socket syndication. Scoped proxy broker pending; direct network access is prohibited in production sandbox.',
     isScopedApiAvailable: false,
   },
+  'output.manage': {
+    permission: 'output.manage',
+    status: 'ENFORCED',
+    description: 'Configure and toggle audio stream syndication outputs (e.g. Telegram Live, RTMP).',
+    isScopedApiAvailable: true,
+  },
+  'ui.contribute': {
+    permission: 'ui.contribute',
+    status: 'ENFORCED',
+    description: 'Register controlled UI extension panels and actions within workstation slots.',
+    isScopedApiAvailable: true,
+  },
   'filesystem.read': {
     permission: 'filesystem.read',
     status: 'DECLARED',
@@ -125,6 +143,83 @@ export const PERMISSION_CAPABILITY_MAP: Record<PluginPermission, PluginCapabilit
     isScopedApiAvailable: false,
   },
 };
+
+/**
+ * Output connection lifecycle states.
+ */
+export type OutputConnectionState =
+  | 'DISCONNECTED'
+  | 'CONNECTING'
+  | 'CONNECTED'
+  | 'RECONNECTING'
+  | 'ERROR';
+
+/**
+ * Output runtime status descriptor.
+ */
+export interface OutputStatus {
+  state: OutputConnectionState;
+  uptimeSeconds: number;
+  destinationName: string;
+  targetEndpoint?: string;
+  bitrateKbps?: number;
+  error?: string;
+  metadata?: Record<string, unknown>;
+}
+
+/**
+ * Generic configuration schema for output plugins.
+ */
+export interface OutputPluginConfig {
+  enabled: boolean;
+  destinationUrl?: string;
+  credentials?: Record<string, string>;
+  audioSettings?: {
+    bitrateKbps: number;
+    format: 'MP3' | 'AAC' | 'PCM';
+    sampleRate: number;
+  };
+  custom?: Record<string, unknown>;
+}
+
+/**
+ * Available UI extension slots inside Broadcst Studio workstation shell.
+ */
+export type UIExtensionSlot =
+  | 'OUTPUT_PANEL'
+  | 'SETTINGS_PANEL'
+  | 'ON_AIR_PANEL'
+  | 'INSPECTOR'
+  | 'TOOLBAR_ACTION';
+
+/**
+ * Host-provided context passed into plugin UI render callbacks.
+ */
+export interface UIExtensionContext {
+  pluginId: string;
+  theme: 'dark' | 'light';
+  commands: {
+    execute<TResult = unknown>(command: string, params?: unknown): Promise<TResult>;
+  };
+  state: {
+    get<T = unknown>(key: string, defaultValue?: T): T | undefined;
+    set<T = unknown>(key: string, value: T): void;
+  };
+  notifyAction: (message: string) => void;
+}
+
+/**
+ * Controlled UI extension descriptor registered by a plugin.
+ */
+export interface UIExtensionDescriptor {
+  id: string;
+  pluginId: string;
+  slot: UIExtensionSlot;
+  title: string;
+  icon?: string;
+  description?: string;
+  render: (context: UIExtensionContext) => unknown;
+}
 
 /**
  * Execution domains:

@@ -12,6 +12,7 @@ import {
   validateManifest,
 } from './types';
 import { permissionManager } from './permissionManager';
+import { uiExtensionManager } from './uiExtensionManager';
 import { controlApi } from '../controlApi';
 import { eventBus } from '../operations/eventBus';
 import { logger } from '../logger';
@@ -304,12 +305,32 @@ class PluginHost {
       };
     };
 
+    // Scoped UI Extension Controller
+    const uiController = {
+      registerPanel: (descriptor: any) => {
+        const hasPermission = permissionManager.hasPermission(manifest.permissions, 'ui.contribute');
+        if (!hasPermission) {
+          throw new Error(
+            `Permission Denied: Plugin "${pluginId}" requires "ui.contribute" to register UI extensions.`
+          );
+        }
+        return uiExtensionManager.registerDescriptor({
+          ...descriptor,
+          pluginId,
+        });
+      },
+      getRegistrations: () => {
+        return uiExtensionManager.getPluginExtensions(pluginId);
+      },
+    };
+
     return {
       manifest,
       logger: scopedLogger,
       events: scopedEvents,
       commands: scopedCommands,
       state: stateStore,
+      ui: uiController,
       getAudioMetrics,
     };
   }
@@ -370,6 +391,7 @@ class PluginHost {
     }
 
     this.cleanupPluginListeners(pluginId);
+    uiExtensionManager.cleanupPluginExtensions(pluginId);
 
     if (instance.plugin && typeof instance.plugin.dispose === 'function') {
       try {
@@ -456,6 +478,14 @@ class PluginHost {
     if (!instance) return false;
 
     try {
+      if (instance.plugin && typeof (instance.plugin as any).stopOutput === 'function') {
+        try {
+          await (instance.plugin as any).stopOutput();
+        } catch (e) {
+          logger.warn('PluginHost', `Plugin stopOutput error: ${pluginId}`, { error: e });
+        }
+      }
+
       if (instance.plugin && typeof instance.plugin.stop === 'function') {
         await instance.plugin.stop();
       }
@@ -463,6 +493,7 @@ class PluginHost {
       instance.enabled = false;
       instance.state = 'DISABLED';
       this.cleanupPluginListeners(pluginId);
+      uiExtensionManager.cleanupPluginExtensions(pluginId);
 
       this.broadcastPluginEvent('plugin.disabled', {
         pluginId,
@@ -478,10 +509,22 @@ class PluginHost {
       instance.enabled = false;
       instance.errorMessage = `Disable error: ${err?.message || String(err)}`;
       this.cleanupPluginListeners(pluginId);
+      uiExtensionManager.cleanupPluginExtensions(pluginId);
       this.notify();
       logger.error('PluginHost', `Failed disabling plugin "${pluginId}"`, { error: err });
       return false;
     }
+  }
+
+  /**
+   * Reloads a plugin without restarting the application.
+   */
+  public async reloadPlugin(pluginId: string): Promise<boolean> {
+    const instance = this.instances.get(pluginId);
+    if (!instance) return false;
+    logger.info('PluginHost', `Reloading plugin: ${pluginId}`);
+    await this.disablePlugin(pluginId);
+    return await this.enablePlugin(pluginId);
   }
 
   public getPlugins(): PluginInstance[] {

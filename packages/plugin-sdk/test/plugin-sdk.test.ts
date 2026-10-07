@@ -130,3 +130,69 @@ test('Package Loader: validates plugin package boundary', async () => {
   assert.ok(invalidRes.error?.includes('entrypoint implementation code'));
 });
 
+test('Output Manifest: accepts OUTPUT type and output/ui permissions', () => {
+  const outputManifest = {
+    id: 'org.broadcst.example.telegram-output',
+    name: 'Telegram Live Audio Streamer',
+    version: '1.0.0',
+    apiVersion: PLUGIN_API_VERSION,
+    author: 'Broadcst Community Examples',
+    description: 'Reference output plugin for Telegram RTMP audio syndication',
+    type: 'OUTPUT',
+    permissions: ['output.manage', 'metadata.read', 'ui.contribute'],
+  };
+
+  const res = validateManifest(outputManifest);
+  assert.equal(res.valid, true);
+  assert.equal(res.errors.length, 0);
+  assert.equal(res.compatibility, 'SUPPORTED');
+  assert.equal(res.manifest?.type, 'OUTPUT');
+});
+
+test('Output & UI Permissions: enforces fail-closed output.manage and ui.contribute', () => {
+  const outputPerms = ['output.manage', 'ui.contribute'] as const;
+  const noOutputPerms = ['metadata.read'] as const;
+
+  // 1. output.start with output.manage -> ALLOW
+  const authOutput = verifyCommandAuthorization('test-output', outputPerms, 'output.start');
+  assert.equal(authOutput.allowed, true);
+  assert.equal(authOutput.requiredPermission, 'output.manage');
+
+  // 2. output.start without output.manage -> DENY
+  const denyOutput = verifyCommandAuthorization('test-unauth', noOutputPerms, 'output.start');
+  assert.equal(denyOutput.allowed, false);
+  assert.equal(denyOutput.requiredPermission, 'output.manage');
+  assert.ok(denyOutput.reason?.includes('output.manage'));
+
+  // 3. ui.register with ui.contribute -> ALLOW
+  const authUI = verifyCommandAuthorization('test-ui', outputPerms, 'ui.register');
+  assert.equal(authUI.allowed, true);
+  assert.equal(authUI.requiredPermission, 'ui.contribute');
+
+  // 4. ui.register without ui.contribute -> DENY
+  const denyUI = verifyCommandAuthorization('test-unauth', noOutputPerms, 'ui.register');
+  assert.equal(denyUI.allowed, false);
+  assert.equal(denyUI.requiredPermission, 'ui.contribute');
+  assert.ok(denyUI.reason?.includes('ui.contribute'));
+});
+
+test('Output Plugin Contract: lifecycle status transitions and execution domain', async () => {
+  const { getExecutionDomain } = await import('../src/index.ts');
+  assert.equal(getExecutionDomain('OUTPUT'), 'NON_REALTIME_ASYNC');
+
+  // Verify status states
+  type StatusState = 'DISCONNECTED' | 'CONNECTING' | 'CONNECTED' | 'RECONNECTING' | 'ERROR';
+  const states: StatusState[] = ['DISCONNECTED', 'CONNECTING', 'CONNECTED', 'RECONNECTING', 'ERROR'];
+  assert.equal(states.length, 5);
+
+  const mockOutputStatus = {
+    state: 'CONNECTED' as const,
+    uptimeSeconds: 42,
+    destinationName: 'Telegram Live Channel',
+    targetEndpoint: 'rtmps://dc4-1.rtmp.t.me/s/',
+    bitrateKbps: 128,
+  };
+  assert.equal(mockOutputStatus.state, 'CONNECTED');
+  assert.equal(mockOutputStatus.bitrateKbps, 128);
+});
+

@@ -1,6 +1,7 @@
 import { PluginContext } from './context';
 import { TrackChangedEvent } from './events';
 import { PluginManifest } from './manifest';
+import { OutputPluginConfig, OutputStatus } from './types';
 
 /**
  * Base lifecycle contract for all Broadcst Studio plugins.
@@ -84,6 +85,42 @@ export interface AudioSourcePlugin extends Plugin {
   /** Obtain active streaming relay or network source URI */
   getStreamUri?(): Promise<string | null>;
 }
+
+/**
+ * OUTPUT PLUGIN CONTRACT (DOMAIN B: NON-REALTIME ASYNC HOST BOUNDARY)
+ *
+ * Provides external audio syndication destinations (Telegram Live, RTMP, YouTube, Discord, Twitch).
+ *
+ * ARCHITECTURAL BOUNDARY:
+ * Native SHOUTcast remains the primary C/Rust low-latency output.
+ * Output plugins handle connection lifecycle, metadata updates, status reporting,
+ * and user-facing controls.
+ * Future native target: Rust master audio -> native-safe ringbuffer -> output plugin streaming pipeline.
+ */
+export interface OutputPlugin<TConfig = OutputPluginConfig> extends Plugin {
+  readonly manifest: PluginManifest & { type: 'OUTPUT' };
+
+  /**
+   * Starts output stream transmission to destination with given configuration.
+   */
+  startOutput?(config?: TConfig): Promise<boolean> | boolean;
+
+  /**
+   * Stops active stream transmission.
+   */
+  stopOutput?(): Promise<boolean> | boolean;
+
+  /**
+   * Returns current honest runtime connection status and telemetry.
+   */
+  getOutputStatus(): OutputStatus;
+
+  /**
+   * Updates stream metadata (e.g. now playing track title/artist).
+   */
+  updateMetadata?(metadata: { title: string; artist: string; album?: string }): Promise<void> | void;
+}
+
 
 /**
  * METADATA PLUGIN CONTRACT
