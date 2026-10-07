@@ -65,20 +65,68 @@ test('Manifest Validation: detects unsupported API version', () => {
   assert.ok(res.errors.some((e) => e.includes('API version')));
 });
 
-test('Permissions: enforces command authorization policy', () => {
+test('Permissions: enforces fail-closed default-deny authorization policy', () => {
   const metadataPluginPermissions = ['metadata.read', 'metadata.write'] as const;
 
-  // 1. Authorized command
+  // 1. Allowed known command (known command + permission present -> ALLOW)
   const authRes = verifyCommandAuthorization('test-plugin', metadataPluginPermissions, 'broadcast.set_metadata');
   assert.equal(authRes.allowed, true);
 
-  // 2. Unauthorized command (requires automation.execute)
-  const unauthRes = verifyCommandAuthorization('test-plugin', metadataPluginPermissions, 'deck.play');
-  assert.equal(unauthRes.allowed, false);
-  assert.equal(unauthRes.requiredPermission, 'automation.execute');
-  assert.ok(unauthRes.reason?.includes('automation.execute'));
+  // 2. Denied known command (known command + permission missing -> DENY)
+  const deniedKnown = verifyCommandAuthorization('test-plugin', metadataPluginPermissions, 'deck.play');
+  assert.equal(deniedKnown.allowed, false);
+  assert.equal(deniedKnown.requiredPermission, 'automation.execute');
+  assert.ok(deniedKnown.reason?.includes('automation.execute'));
 
-  // 3. Direct check helper
+  // 3. Denied unknown command (unknown command -> DENY fail-closed)
+  const deniedUnknown = verifyCommandAuthorization('test-plugin', metadataPluginPermissions, 'raw_system.exec_root');
+  assert.equal(deniedUnknown.allowed, false);
+  assert.equal(deniedUnknown.requiredPermission, undefined);
+  assert.ok(deniedUnknown.reason?.includes('Unknown or unsupported command'));
+
+  // 4. Direct check helper
   assert.equal(checkPluginPermission(metadataPluginPermissions, 'metadata.write'), true);
   assert.equal(checkPluginPermission(metadataPluginPermissions, 'audio.write'), false);
 });
+
+test('Execution Domain: distinguishes Domain A realtime from Domain B non-realtime', async () => {
+  const { getExecutionDomain } = await import('../src/index.ts');
+  assert.equal(getExecutionDomain('AUDIO_PROCESSOR'), 'REALTIME_AUDIO');
+  assert.equal(getExecutionDomain('METADATA'), 'NON_REALTIME_ASYNC');
+  assert.equal(getExecutionDomain('AUDIO_SOURCE'), 'NON_REALTIME_ASYNC');
+  assert.equal(getExecutionDomain('AUTOMATION'), 'NON_REALTIME_ASYNC');
+  assert.equal(getExecutionDomain('UTILITY'), 'NON_REALTIME_ASYNC');
+});
+
+test('Package Loader: validates plugin package boundary', async () => {
+  const { validatePluginPackage, PLUGIN_API_VERSION } = await import('../src/index.ts');
+
+  // Valid package
+  const validPkg = {
+    manifest: {
+      id: 'org.example.pkg',
+      name: 'Valid Package',
+      version: '1.0.0',
+      apiVersion: PLUGIN_API_VERSION,
+      author: 'Tester',
+      description: 'Desc',
+      type: 'METADATA' as const,
+      permissions: ['metadata.read' as const],
+      entryPoint: 'index.js',
+    },
+    entryPointCode: 'export default { initialize() {} };',
+  };
+  const validRes = validatePluginPackage(validPkg);
+  assert.equal(validRes.success, true);
+  assert.ok(validRes.manifest);
+
+  // Missing entrypoint code when entryPoint declared
+  const invalidPkg = {
+    manifest: validPkg.manifest,
+    entryPointCode: '   ',
+  };
+  const invalidRes = validatePluginPackage(invalidPkg);
+  assert.equal(invalidRes.success, false);
+  assert.ok(invalidRes.error?.includes('entrypoint implementation code'));
+});
+

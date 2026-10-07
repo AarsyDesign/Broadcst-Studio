@@ -74,27 +74,39 @@ Every plugin must declare a `manifest.json` at its root. The schema is forward-c
 
 ## 4. Permission Model & Capability Enforcement
 
-Plugins operate on a principle of least privilege. Permissions must be explicitly declared in the manifest.
+Plugins operate under a strict **Fail-Closed (Default-Deny)** security model.
 
-### Available Permissions
-- **`audio.read`**: Inspect audio frames or read master/channel RMS/Peak dB metrics.
-- **`audio.write`**: Output processed audio frames or modify faders/mutes.
-- **`metadata.read`**: Inspect on-air track title, artist, and album tags.
-- **`metadata.write`**: Command metadata updates to SHOUTcast/Icecast encoders.
-- **`filesystem.read`**: Read local audio files or configurations.
-- **`filesystem.write`**: Write diagnostic logs or audio exports.
-- **`network`**: Dispatch external HTTP/WebSocket requests.
-- **`automation.read`**: Receive schedule triggers and program clock events.
-- **`automation.execute`**: Trigger playback commands (`PLAY_DECK`, `NEXT_TRACK`, `START_RECORDING`).
+### Permission Status Model
+Permissions fall into three explicit architectural states:
 
-### Command Enforcement
-When a plugin calls `context.commands.execute(command, params)`, the host verifies that the plugin holds the required permission:
-- `SET_METADATA` → requires `metadata.write`
-- `NEXT_TRACK` / `PLAY_DECK` → requires `automation.execute`
-- `SET_FADER` / `SET_MUTE` → requires `audio.write`
-- `START_RECORDING` → requires `automation.execute`
+| State | Definition | Current Status |
+| :--- | :--- | :--- |
+| **`ENFORCED`** | Verified and gated at runtime before any action executes. | `audio.read`, `audio.write`, `metadata.read`, `metadata.write`, `automation.read`, `automation.execute` |
+| **`DECLARED`** | Declared in manifest for future capability negotiation; scoped host broker API is pending. | `network`, `filesystem.read`, `filesystem.write` |
+| **`AVAILABLE`** | Exposes a dedicated scoped host capability API. | Session state store, scoped logger, scoped event bus, command executor. |
 
-Unauthorized calls are rejected with a `Permission Denied` error.
+> [!CAUTION]
+> **No Unrestricted Access:**
+> A plugin declaring `network` or `filesystem.write` does NOT automatically gain unmonitored host access. In the production architecture, unsanctioned direct global browser/Node access is prohibited.
+
+### Default-Deny Command Enforcement
+When a plugin invokes `context.commands.execute(command, params)`:
+1. **Allowlist Verification**: The command must exist in the Broadcst Plugin API allowlist. Any unknown or unmapped command is immediately **DENIED**.
+2. **Permission Verification**: The plugin must have declared the required permission. If missing, it is **DENIED**.
+3. **Audit Logging**: Every invocation attempt (allowed or denied) is permanently recorded in the host command audit trace.
+
+```
+Incoming Plugin Command
+       │
+       ▼
+Is Command Known? ─── NO ───► DENY & AUDIT (Unknown Command)
+       │ YES
+       ▼
+Permission Declared? ─── NO ──► DENY & AUDIT (Permission Denied)
+       │ YES
+       ▼
+ALLOW & EXECUTE via Control API
+```
 
 ---
 

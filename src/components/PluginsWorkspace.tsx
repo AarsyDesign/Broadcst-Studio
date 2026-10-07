@@ -360,6 +360,20 @@ export const PluginsWorkspace: React.FC = () => {
                           {p.manifest.type.replace('_', ' ')}
                         </span>
 
+                        <span
+                          className="ws-tag"
+                          style={{
+                            color: p.executionDomain === 'REALTIME_AUDIO' ? 'var(--ws-warning)' : 'var(--ws-live)',
+                            borderColor: p.executionDomain === 'REALTIME_AUDIO' ? 'var(--ws-warning)' : 'var(--ws-line)',
+                          }}
+                        >
+                          {p.executionDomain === 'REALTIME_AUDIO' ? 'Domain A: Realtime (Contract)' : 'Domain B: Non-Realtime'}
+                        </span>
+
+                        <span className="ws-tag" style={{ color: 'var(--ws-subtle)' }}>
+                          {p.registrationSource === 'DEV_DIRECT_REGISTRATION' ? 'Dev Direct' : 'Package'}
+                        </span>
+
                         <span className="ws-tag" style={{ color: 'var(--ws-live)', fontFamily: 'var(--font-mono)' }}>
                           API v{p.manifest.apiVersion}
                         </span>
@@ -384,6 +398,23 @@ export const PluginsWorkspace: React.FC = () => {
                       <div style={{ fontSize: '11px', color: 'var(--ws-muted)', marginTop: '3px', lineHeight: 1.4 }}>
                         {p.manifest.description}
                       </div>
+
+                      {/* Runtime entrypoint missing notice */}
+                      {!p.plugin && (
+                        <div
+                          style={{
+                            marginTop: '6px',
+                            padding: '4px 8px',
+                            borderRadius: '4px',
+                            background: 'rgba(245, 158, 11, 0.08)',
+                            border: '1px dashed var(--ws-warning)',
+                            color: 'var(--ws-warning)',
+                            fontSize: '10.5px',
+                          }}
+                        >
+                          ⚠️ Runtime entrypoint not loaded. Sideloaded manifest requires an executable plugin instance to enable.
+                        </div>
+                      )}
 
                       {/* Error Banner */}
                       {p.errorMessage && (
@@ -412,15 +443,26 @@ export const PluginsWorkspace: React.FC = () => {
                           <span className="ws-tag">None (Sandboxed)</span>
                         ) : (
                           p.manifest.permissions.map((perm) => (
-                            <span key={perm} className="ws-tag" style={{ color: 'var(--ws-text)' }}>
-                              {perm}
+                            <span
+                              key={perm}
+                              className="ws-tag"
+                              style={{
+                                color: perm === 'network' || perm.startsWith('filesystem') ? 'var(--ws-warning)' : 'var(--ws-text)',
+                              }}
+                              title={
+                                perm === 'network' || perm.startsWith('filesystem')
+                                  ? 'Declared in manifest. Scoped host broker API pending.'
+                                  : 'Active and enforced by host gateway.'
+                              }
+                            >
+                              {perm} {perm === 'network' || perm.startsWith('filesystem') ? ' (Declared)' : ' (Enforced)'}
                             </span>
                           ))
                         )}
 
                         {p.manifest.type === 'AUDIO_PROCESSOR' && (
-                          <span className="ws-tag" style={{ color: 'var(--ws-live)', borderColor: 'var(--ws-live)' }}>
-                            Realtime (Zero-Alloc)
+                          <span className="ws-tag" style={{ color: 'var(--ws-warning)', borderColor: 'var(--ws-warning)' }}>
+                            Contract (Native Target)
                           </span>
                         )}
                       </div>

@@ -8,8 +8,10 @@ export * from '../../../packages/plugin-sdk/src';
 import {
   Plugin,
   PluginCompatibility,
+  PluginExecutionDomain,
   PluginLifecycleState,
   PluginManifest,
+  PluginRegistrationSource,
 } from '../../../packages/plugin-sdk/src';
 
 /**
@@ -27,6 +29,10 @@ export interface PluginInstance {
   validationWarnings?: string[];
   /** Honest architecture flag: current in-process execution vs future isolated worker */
   runtimeMode: 'in_process_prototype' | 'isolated_worker';
+  /** Provenance of this plugin registration */
+  registrationSource: PluginRegistrationSource;
+  /** Execution domain classification */
+  executionDomain: PluginExecutionDomain;
 }
 
 /**

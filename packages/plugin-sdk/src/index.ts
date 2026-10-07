@@ -16,3 +16,4 @@ export * from './permissions';
 export * from './events';
 export * from './context';
 export * from './contracts';
+export * from './packageLoader';

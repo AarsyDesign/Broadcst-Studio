@@ -34,7 +34,13 @@ export interface Plugin<_TConfig = Record<string, unknown>> {
 }
 
 /**
- * REALTIME AUDIO PROCESSOR CONTRACT
+ * REALTIME AUDIO PROCESSOR CONTRACT (DOMAIN A: REALTIME)
+ *
+ * ARCHITECTURAL STATUS: CONTRACT / PROTOTYPE SPECIFICATION ONLY.
+ * In Broadcst Studio, realtime audio processing is NOT routed through the React/UI thread.
+ * This TypeScript interface defines the formal API contract for plugin authors.
+ * In the target architecture, realtime audio plugins compile to WebAssembly or native
+ * shared libraries executing directly within the low-latency CPAL summing pipeline.
  *
  * CRITICAL REALTIME RESTRICTIONS:
  * 1. Must execute deterministically within the audio callback deadline (e.g. < 5.3ms for 256 samples @ 48kHz).

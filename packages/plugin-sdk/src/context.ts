@@ -17,6 +17,11 @@ export interface PluginCommandExecutor {
   execute<TResult = unknown>(command: string, params?: unknown): Promise<TResult>;
 }
 
+/**
+ * Plugin state store interface.
+ * CURRENT RUNTIME: Session in-memory store (volatile; resets upon process restart).
+ * FUTURE RUNTIME: Replaceable interface backed by durable isolated SQLite/IndexedDB partitions.
+ */
 export interface PluginStateStore {
   get<T = unknown>(key: string, defaultValue?: T): T | undefined;
   set<T = unknown>(key: string, value: T): void;
@@ -32,18 +37,22 @@ export interface AudioMetricsReadout {
 
 /**
  * Public execution context provided to plugins by the host.
- * All operations are scoped and subject to permission verification.
+ * All operations are scoped, strictly isolated, and subject to fail-closed permission verification.
+ * Plugins NEVER receive raw access to AppState, audioEngine, or direct Tauri IPC.
  */
 export interface PluginContext {
   /** Manifest declaring this plugin's identity and capabilities */
   readonly manifest: Readonly<PluginManifest>;
   /** Scoped logging facility */
   readonly logger: PluginLogger;
-  /** Safe application event subscription */
+  /** Safe application event subscription (automatically isolated and torn down on disable) */
   readonly events: PluginEventBus;
-  /** Controlled command execution (gated by declared permissions) */
+  /** Controlled command execution (gated by default-deny permission policy) */
   readonly commands: PluginCommandExecutor;
-  /** Local persistent state store */
+  /**
+   * Scoped session state store.
+   * NOTE: Current host implementation provides in-memory session state.
+   */
   readonly state: PluginStateStore;
   /** Current station audio metrics (available if 'audio.read' permission granted) */
   getAudioMetrics?(): AudioMetricsReadout;

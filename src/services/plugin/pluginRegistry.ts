@@ -4,6 +4,7 @@ import {
   PluginManifest,
   ValidationResult,
   validateManifest,
+  validatePluginPackage,
 } from './types';
 import { pluginHost } from './pluginHost';
 import { logger } from '../logger';
@@ -46,7 +47,7 @@ const LOCAL_SAMPLE_PLUGINS: SamplePluginEntry[] = [
 /**
  * Local-First Plugin Registry
  *
- * Manages plugin discovery, validation, installation, and removal.
+ * Separates Developer Direct In-Memory Registration from Structured Package Loading.
  * No online marketplace or cloud telemetry.
  */
 class PluginRegistry {
@@ -57,9 +58,9 @@ class PluginRegistry {
   }
 
   private async initializeDefaultPlugins() {
-    // Automatically load the example plugins into the host in ready/disabled state
+    // Automatically register the sample plugins into the host in ready/disabled state
     for (const sample of LOCAL_SAMPLE_PLUGINS) {
-      await pluginHost.registerPlugin(sample.manifest, sample.plugin);
+      await pluginHost.registerPlugin(sample.manifest, sample.plugin, 'DEV_DIRECT_REGISTRATION');
     }
   }
 
@@ -80,7 +81,10 @@ class PluginRegistry {
   }
 
   /**
-   * Installs or sideloads a plugin from a JSON manifest.
+   * DEV DIRECT REGISTRATION:
+   * Sideloads a manifest with an optional in-memory developer implementation.
+   * If customPluginImpl is omitted, the plugin will register but fail enable
+   * until a runtime entrypoint is provided.
    */
   public async installFromManifest(
     manifestCandidate: unknown,
@@ -95,7 +99,11 @@ class PluginRegistry {
       };
     }
 
-    const regResult = await pluginHost.registerPlugin(valResult.manifest, customPluginImpl);
+    const regResult = await pluginHost.registerPlugin(
+      valResult.manifest,
+      customPluginImpl,
+      'DEV_DIRECT_REGISTRATION'
+    );
     if (!regResult.success) {
       return {
         success: false,
@@ -104,16 +112,51 @@ class PluginRegistry {
       };
     }
 
-    logger.info('PluginRegistry', `Installed plugin: ${valResult.manifest.name} (${valResult.manifest.id})`);
+    logger.info('PluginRegistry', `Directly registered: ${valResult.manifest.name} (${valResult.manifest.id})`);
     this.notify();
     return { success: true, validation: valResult };
+  }
+
+  /**
+   * PLUGIN PACKAGE LOADING:
+   * Loads a structured package object or unpacked archive.
+   */
+  public async installFromPackage(
+    packageCandidate: unknown,
+    runtimeImpl?: Plugin
+  ): Promise<{ success: boolean; error?: string; validation?: ValidationResult }> {
+    const pkgResult = validatePluginPackage(packageCandidate);
+    if (!pkgResult.success || !pkgResult.manifest) {
+      return {
+        success: false,
+        error: pkgResult.error || 'Invalid package archive structure',
+        validation: pkgResult.validation,
+      };
+    }
+
+    const regResult = await pluginHost.registerPlugin(
+      pkgResult.manifest,
+      runtimeImpl,
+      'PLUGIN_PACKAGE'
+    );
+    if (!regResult.success) {
+      return {
+        success: false,
+        error: regResult.error,
+        validation: pkgResult.validation,
+      };
+    }
+
+    logger.info('PluginRegistry', `Loaded package: ${pkgResult.manifest.name} (${pkgResult.manifest.id})`);
+    this.notify();
+    return { success: true, validation: pkgResult.validation };
   }
 
   public async installSample(pluginId: string): Promise<boolean> {
     const found = LOCAL_SAMPLE_PLUGINS.find((s) => s.manifest.id === pluginId);
     if (!found) return false;
 
-    const res = await pluginHost.registerPlugin(found.manifest, found.plugin);
+    const res = await pluginHost.registerPlugin(found.manifest, found.plugin, 'DEV_DIRECT_REGISTRATION');
     if (res.success) {
       this.notify();
       return true;

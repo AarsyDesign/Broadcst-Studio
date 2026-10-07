@@ -61,7 +61,18 @@ export interface CommandPermissionCheck {
 }
 
 /**
+ * Checks whether a command is recognized in the Broadcst Plugin API command allowlist.
+ */
+export function isCommandKnown(command: string): boolean {
+  return Object.prototype.hasOwnProperty.call(COMMAND_PERMISSION_MAP, command.trim());
+}
+
+/**
  * Validates if a plugin is authorized to invoke a particular application command.
+ * SECURITY MODEL: FAIL-CLOSED (DEFAULT-DENY)
+ * 1. Known command + declared permission -> ALLOW
+ * 2. Known command + missing permission -> DENY
+ * 3. Unknown or unmapped command -> DENY
  */
 export function verifyCommandAuthorization(
   pluginId: string,
@@ -71,10 +82,11 @@ export function verifyCommandAuthorization(
   const normalizedCommand = command.trim();
   const required = COMMAND_PERMISSION_MAP[normalizedCommand];
 
-  // If command requires no special permission or is unrecognized, check general policy
+  // FAIL-CLOSED: Any command not in the explicit allowlist is rejected
   if (!required) {
     return {
-      allowed: true,
+      allowed: false,
+      reason: `Unknown or unsupported command: "${command}". Commands must be explicitly registered in the Broadcst Plugin API allowlist.`,
     };
   }
 
