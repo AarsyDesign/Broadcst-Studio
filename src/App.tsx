@@ -16,6 +16,8 @@ import { ipc } from './services/ipc';
 import { logger } from './services/logger';
 import { playbackService } from './services/playbackService';
 import { recorderService } from './services/recorderService';
+import { recoveryManager } from './services/recovery/recoveryManager';
+import { operationsManager } from './services/operations/operationsManager';
 import { BroadcastStatus } from './types/broadcast';
 import { StreamMetrics } from './types/telemetry';
 import { TranscriptSegment, TranscriptStatus } from './types/transcript';
@@ -52,7 +54,7 @@ export const App: React.FC = () => {
     networkLatencyMs: 0,
   });
 
-  const [transcriptStatus, setTranscriptStatus] = useState<TranscriptStatus>({
+  const [transcriptStatus] = useState<TranscriptStatus>({
     state: 'IDLE',
     segmentsCount: 0,
     config: {
@@ -76,6 +78,7 @@ export const App: React.FC = () => {
   useEffect(() => {
     setIsNative(ipc.isNative());
     logger.info('App', 'Broadcast workstation mounted');
+    recoveryManager.restoreWorkstationState();
 
     ipc.invoke('broadcast.get_status').then((value) => {
       if (value) setStatus(value);
@@ -110,10 +113,10 @@ export const App: React.FC = () => {
 
   const handleStartBroadcast = async () => {
     try {
-      const next = await ipc.invoke('broadcast.start');
-      setStatus(next);
-      const transcript = await ipc.invoke('transcript.start');
-      setTranscriptStatus(transcript);
+      const op = await operationsManager.dispatch({ action: 'START_BROADCAST', caller: 'OPERATOR_UI' });
+      if (op.success && op.data) {
+        setStatus(op.data);
+      }
     } catch (err) {
       logger.error('Broadcast', 'Failed to start broadcast', { error: err });
     }
@@ -121,10 +124,10 @@ export const App: React.FC = () => {
 
   const handleStopBroadcast = async () => {
     try {
-      const next = await ipc.invoke('broadcast.stop');
-      setStatus(next);
-      const transcript = await ipc.invoke('transcript.stop');
-      setTranscriptStatus(transcript);
+      const op = await operationsManager.dispatch({ action: 'STOP_BROADCAST', caller: 'OPERATOR_UI' });
+      if (op.success && op.data) {
+        setStatus(op.data);
+      }
       setMasterPeakDb(-90);
       setMasterRmsDb(-90);
     } catch (err) {
@@ -134,8 +137,10 @@ export const App: React.FC = () => {
 
   const handleReconnect = async () => {
     try {
-      const next = await ipc.invoke('broadcast.reconnect');
-      setStatus(next);
+      const op = await operationsManager.dispatch({ action: 'RECONNECT_BROADCAST', caller: 'OPERATOR_UI' });
+      if (op.success && op.data) {
+        setStatus(op.data);
+      }
     } catch (err) {
       logger.error('Broadcast', 'Reconnect failed', { error: err });
     }

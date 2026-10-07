@@ -132,6 +132,15 @@ pub async fn broadcast_get_status(state: State<'_, AppState>) -> Result<Broadcas
 }
 
 #[command]
+pub async fn broadcast_update_config(
+    state: State<'_, AppState>,
+    config: ShoutcastConfig,
+) -> Result<BroadcastStatus, String> {
+    state.shoutcast_client.set_config(config);
+    Ok(state.shoutcast_client.get_status())
+}
+
+#[command]
 pub async fn audio_get_devices() -> Result<Vec<AudioDevice>, String> {
     Ok(AudioCaptureManager::enumerate_input_devices())
 }
@@ -241,6 +250,84 @@ pub async fn telemetry_get_snapshot(
             memory_usage_mb: 0.0,
             audio_thread_time_ms: 0.0,
         },
+    })
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviceRecoveryResult {
+    pub capture_status: String,
+    pub active_input_device: Option<String>,
+    pub monitor_status: String,
+    pub active_output_device: Option<String>,
+    pub recovered: bool,
+    pub message: String,
+}
+
+#[command]
+pub async fn audio_recover_devices(
+    state: State<'_, AppState>,
+    preferred_input: Option<String>,
+    preferred_output: Option<String>,
+) -> Result<DeviceRecoveryResult, String> {
+    let mut message_parts = Vec::new();
+    let mut recovered = false;
+
+    // 1. Recover Capture (Input)
+    let _was_capturing = state.audio_engine.is_capturing();
+    state.audio_engine.stop_capture();
+
+    let capture_attempt = if let Some(ref dev) = preferred_input {
+        state.audio_engine.start_capture(Some(dev)).or_else(|_| state.audio_engine.start_capture(None))
+    } else {
+        state.audio_engine.start_capture(None)
+    };
+
+    let (capture_status, active_input) = match capture_attempt {
+        Ok(dev_name) => {
+            message_parts.push(format!("Input capture restored on '{}'", dev_name));
+            recovered = true;
+            ("ACTIVE".to_string(), Some(dev_name))
+        }
+        Err(e) => {
+            message_parts.push(format!("Input recovery failed: {}", e));
+            ("ERROR".to_string(), None)
+        }
+    };
+
+    // 2. Recover Monitor (Output)
+    let was_monitoring = state.audio_engine.is_monitoring();
+    let mut monitor_status = "IDLE".to_string();
+    let mut active_output = None;
+
+    if was_monitoring || preferred_output.is_some() {
+        state.audio_engine.stop_monitor();
+        let mon_attempt = if let Some(ref dev) = preferred_output {
+            state.audio_engine.start_monitor(Some(dev)).or_else(|_| state.audio_engine.start_monitor(None))
+        } else {
+            state.audio_engine.start_monitor(None)
+        };
+
+        match mon_attempt {
+            Ok(dev_name) => {
+                monitor_status = "ACTIVE".to_string();
+                active_output = Some(dev_name.clone());
+                message_parts.push(format!("Audio monitor restored on '{}'", dev_name));
+            }
+            Err(e) => {
+                monitor_status = "ERROR".to_string();
+                message_parts.push(format!("Monitor recovery failed: {}", e));
+            }
+        }
+    }
+
+    Ok(DeviceRecoveryResult {
+        capture_status,
+        active_input_device: active_input,
+        monitor_status,
+        active_output_device: active_output,
+        recovered,
+        message: message_parts.join("; "),
     })
 }
 
@@ -874,6 +961,20 @@ pub async fn control_action(
             };
             crate::recording::MasterRecorder::open_folder(&target)?;
             Ok(serde_json::json!({ "success": true, "path": target }))
+        }
+        "recover_devices" => {
+            let preferred_in = params
+                .as_ref()
+                .and_then(|p| p.get("preferredInput"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            let preferred_out = params
+                .as_ref()
+                .and_then(|p| p.get("preferredOutput"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            let res = audio_recover_devices(state, preferred_in, preferred_out).await?;
+            Ok(serde_json::to_value(res).unwrap_or(serde_json::json!({ "success": true })))
         }
         other => Err(format!("Unknown control action: '{}'", other)),
     }

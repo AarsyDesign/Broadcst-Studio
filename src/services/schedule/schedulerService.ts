@@ -1,5 +1,6 @@
 import { ActiveScheduleSnapshot, ScheduleEvent } from './types';
-import { controlApi } from '../controlApi';
+import { operationsManager } from '../operations/operationsManager';
+import { eventBus } from '../operations/eventBus';
 import { logger } from '../logger';
 
 const DEFAULT_SCHEDULE_EVENTS: ScheduleEvent[] = [
@@ -275,9 +276,23 @@ class SchedulerService {
 
       // Check transition trigger
       if (snapshot.currentEvent && snapshot.currentEvent.id !== this.lastFiredEventId) {
+        const prevEvent = this.events.find((e) => e.id === this.lastFiredEventId);
+        if (prevEvent && prevEvent.autoStopRecordingAtEnd) {
+          operationsManager.dispatch({ action: 'STOP_RECORDING', caller: 'SCHEDULE' });
+          eventBus.emit('schedule:event_ended', { event: prevEvent });
+        }
+
         this.lastFiredEventId = snapshot.currentEvent.id;
         snapshot.currentEvent.lastTriggeredAt = new Date().toISOString();
         this.fireEventActions(snapshot.currentEvent);
+      }
+
+      // Check countdown alert (e.g. 60s or 30s before upcoming program)
+      if (snapshot.nextEvent && (snapshot.timeUntilNextSec === 60 || snapshot.timeUntilNextSec === 30)) {
+        eventBus.emit('schedule:countdown_alert', {
+          upcomingEvent: snapshot.nextEvent,
+          secondsRemaining: snapshot.timeUntilNextSec,
+        });
       }
 
       this.notify();
@@ -286,35 +301,31 @@ class SchedulerService {
 
   private async fireEventActions(event: ScheduleEvent) {
     logger.info('SchedulerService', `Scheduled event activated: "${event.title}" (${event.host})`);
+    eventBus.emit('schedule:event_started', { event });
 
     // 1. Auto update stream metadata
     if (event.autoUpdateMetadata) {
-      try {
-        await controlApi.execute(
-          'metadata.set',
-          {
-            metadata: {
-              title: event.title,
-              artist: event.host,
-              album: event.category.replace('_', ' '),
-            },
-          },
-          'AUTOMATION'
-        );
-        logger.info('SchedulerService', `Auto-updated metadata for scheduled event "${event.title}"`);
-      } catch (err) {
-        logger.error('SchedulerService', 'Failed setting metadata from schedule', { error: err });
-      }
+      await operationsManager.dispatch({
+        action: 'PUSH_METADATA',
+        caller: 'SCHEDULE',
+        payload: {
+          title: event.title,
+          artist: event.host,
+        },
+      });
+      logger.info('SchedulerService', `Auto-updated metadata for scheduled event "${event.title}"`);
     }
 
     // 2. Auto start master recording
     if (event.autoStartRecording) {
-      try {
-        await controlApi.execute('recording.start', undefined, 'AUTOMATION');
-        logger.info('SchedulerService', `Auto-started recording for "${event.title}"`);
-      } catch (err) {
-        logger.error('SchedulerService', 'Failed starting recording from schedule', { error: err });
-      }
+      await operationsManager.dispatch({
+        action: 'START_RECORDING',
+        caller: 'SCHEDULE',
+        payload: {
+          prefix: `Schedule_${event.title.replace(/\s+/g, '_')}`,
+        },
+      });
+      logger.info('SchedulerService', `Auto-started recording for "${event.title}"`);
     }
   }
 

@@ -1,10 +1,17 @@
 import { controlApi } from './controlApi';
 import { FullPlaybackSnapshot, PlaylistItem, AudioDevice, TrackMetadataInfo } from '../types/ipc';
+import { historyService } from './history/historyService';
+import { eventBus } from './operations/eventBus';
 import { logger } from './logger';
 
 export type PlaybackSnapshotCallback = (snapshot: FullPlaybackSnapshot) => void;
 
 class PlaybackService {
+  private activePlayingHistory: {
+    deck_a?: { historyId: string; trackId: string; lastPositionMs: number };
+    deck_b?: { historyId: string; trackId: string; lastPositionMs: number };
+  } = {};
+
   private currentSnapshot: FullPlaybackSnapshot = {
     deckA: {
       id: 'deck_a',
@@ -86,6 +93,8 @@ class PlaybackService {
   }
 
   private notifyListeners() {
+    this.trackHistoryTransitions();
+
     this.listeners.forEach((cb) => {
       try {
         cb(this.currentSnapshot);
@@ -93,6 +102,42 @@ class PlaybackService {
         logger.error('PlaybackService', 'Error in snapshot listener', { error: e });
       }
     });
+  }
+
+  private trackHistoryTransitions() {
+    const decks: ('deck_a' | 'deck_b')[] = ['deck_a', 'deck_b'];
+
+    for (const d of decks) {
+      const deckState = d === 'deck_a' ? this.currentSnapshot.deckA : this.currentSnapshot.deckB;
+      const active = this.activePlayingHistory[d];
+
+      if (deckState.state === 'playing' && deckState.track) {
+        if (!active || active.trackId !== deckState.track.id) {
+          // If a previous track was active on this deck, close its history entry
+          if (active) {
+            historyService.recordPlaybackEnd(active.historyId, active.lastPositionMs);
+            eventBus.emit('deck:track_finished', { deckId: d, track: active });
+          }
+
+          // Start new playback entry
+          const historyId = historyService.recordPlaybackStart(deckState.track, d, 'OPERATOR_UI');
+          this.activePlayingHistory[d] = {
+            historyId,
+            trackId: deckState.track.id,
+            lastPositionMs: deckState.positionMs,
+          };
+          eventBus.emit('deck:track_started', { deckId: d, track: deckState.track });
+        } else {
+          // Update position
+          active.lastPositionMs = deckState.positionMs;
+        }
+      } else if (deckState.state !== 'playing' && active) {
+        // Deck stopped or paused or empty
+        historyService.recordPlaybackEnd(active.historyId, active.lastPositionMs);
+        eventBus.emit('deck:track_finished', { deckId: d, track: active });
+        delete this.activePlayingHistory[d];
+      }
+    }
   }
 
   // ==========================================

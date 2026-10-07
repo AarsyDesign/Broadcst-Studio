@@ -20,7 +20,9 @@ export type ActionType =
   | 'NEXT_TRACK'
   | 'TRANSITION_DECK'
   | 'SET_FADER'
-  | 'SET_MUTE';
+  | 'SET_MUTE'
+  | 'RECOVER_HARDWARE'
+  | 'SWITCH_STATION_PROFILE';
 
 export interface AutomationAction {
   type: ActionType;

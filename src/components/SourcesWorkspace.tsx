@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { deviceManager } from '../services/deviceManager';
 import { audioEngine } from '../services/audioEngine';
 import { playbackService } from '../services/playbackService';
+import { recoveryManager, SystemHealthStatus } from '../services/recovery/recoveryManager';
 import { AudioDevice } from '../types/audio';
 
 export const SourcesWorkspace: React.FC = () => {
@@ -14,6 +15,9 @@ export const SourcesWorkspace: React.FC = () => {
   const [activeMonitorDevice, setActiveMonitorDevice] = useState<string | null>(null);
   const [micPeak, setMicPeak] = useState<number>(-90);
   const [micRms, setMicRms] = useState<number>(-90);
+  const [recoveryStatus, setRecoveryStatus] = useState<SystemHealthStatus>(recoveryManager.getStatus());
+  const [lastRecoveryMsg, setLastRecoveryMsg] = useState<string>(recoveryManager.getLastResult()?.message || '');
+  const [isRecovering, setIsRecovering] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   useEffect(() => {
@@ -49,10 +53,16 @@ export const SourcesWorkspace: React.FC = () => {
       }
     });
 
+    const unsubRecovery = recoveryManager.subscribe((st, res) => {
+      setRecoveryStatus(st);
+      if (res?.message) setLastRecoveryMsg(res.message);
+    });
+
     return () => {
       unsubSnap();
       unsubDevices();
       unsubMeter();
+      unsubRecovery();
     };
   }, []);
 
@@ -140,6 +150,25 @@ export const SourcesWorkspace: React.FC = () => {
         </div>
 
         <div className="ws-transport">
+          <button
+            type="button"
+            className="ws-secondary-action"
+            onClick={async () => {
+              setIsRecovering(true);
+              showToast('Attempting hardware recovery...');
+              const res = await recoveryManager.recoverAudioHardware(selectedInputId, selectedOutputId, 'MANUAL_SOURCES_UI');
+              setIsRecovering(false);
+              showToast(res.message);
+            }}
+            disabled={isRecovering}
+            style={{
+              borderColor: recoveryStatus === 'HEALTHY' ? 'var(--ws-line)' : 'var(--ws-live)',
+              color: recoveryStatus === 'HEALTHY' ? 'var(--ws-text)' : 'var(--ws-live)',
+            }}
+            title={lastRecoveryMsg || "Re-synchronize physical WASAPI audio drivers and restore capture stream"}
+          >
+            {isRecovering ? 'Recovering...' : '⟳ Recover Hardware'}
+          </button>
           <button type="button" className="ws-secondary-action" onClick={handleRefreshAll}>
             Rescan Hardware
           </button>

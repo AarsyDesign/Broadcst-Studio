@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { recorderService, RecordedSession, RecorderState } from '../services/recorderService';
 import { transcriptStore } from '../services/transcription/transcriptStore';
+import { historyService } from '../services/history/historyService';
+import { PlaybackHistoryItem, BroadcastSessionHistoryItem } from '../services/history/types';
 
 export const RecordingsWorkspace: React.FC = () => {
   const [recorderState, setRecorderState] = useState<RecorderState>(recorderService.getState());
@@ -10,6 +12,9 @@ export const RecordingsWorkspace: React.FC = () => {
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const [currentTimeSec, setCurrentTimeSec] = useState<number>(0);
   const [searchFilter, setSearchFilter] = useState<string>('');
+  const [activeArchiveTab, setActiveArchiveTab] = useState<'recordings' | 'sessions' | 'playback'>('recordings');
+  const [playbackHistory, setPlaybackHistory] = useState<PlaybackHistoryItem[]>(historyService.getPlaybackHistory());
+  const [sessionHistory, setSessionHistory] = useState<BroadcastSessionHistoryItem[]>(historyService.getSessionHistory());
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -35,9 +40,15 @@ export const RecordingsWorkspace: React.FC = () => {
       }
     });
 
+    const unsubHistory = historyService.subscribe(() => {
+      setPlaybackHistory(historyService.getPlaybackHistory());
+      setSessionHistory(historyService.getSessionHistory());
+    });
+
     return () => {
       unsubState();
       unsubSessions();
+      unsubHistory();
     };
   }, []);
 
@@ -185,6 +196,33 @@ export const RecordingsWorkspace: React.FC = () => {
         </div>
 
         <div className="ws-transport">
+          <div className="ws-tabs">
+            <button
+              type="button"
+              className="ws-tab-btn"
+              data-active={activeArchiveTab === 'recordings'}
+              onClick={() => setActiveArchiveTab('recordings')}
+            >
+              Master WAVs ({sessions.length})
+            </button>
+            <button
+              type="button"
+              className="ws-tab-btn"
+              data-active={activeArchiveTab === 'sessions'}
+              onClick={() => setActiveArchiveTab('sessions')}
+            >
+              On-Air Sessions ({sessionHistory.length})
+            </button>
+            <button
+              type="button"
+              className="ws-tab-btn"
+              data-active={activeArchiveTab === 'playback'}
+              onClick={() => setActiveArchiveTab('playback')}
+            >
+              Music Log ({playbackHistory.length})
+            </button>
+          </div>
+
           {recorderState === 'RECORDING' && (
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginRight: '6px' }}>
               <span className="ws-badge" data-variant="live">
@@ -193,14 +231,56 @@ export const RecordingsWorkspace: React.FC = () => {
             </div>
           )}
 
-          <button
-            type="button"
-            className="ws-secondary-action"
-            onClick={() => recorderService.openRecordingFolder()}
-            title="Open recorded WAV files directory in Windows Explorer"
-          >
-            Open Folder
-          </button>
+          {activeArchiveTab === 'recordings' && (
+            <button
+              type="button"
+              className="ws-secondary-action"
+              onClick={() => recorderService.openRecordingFolder()}
+              title="Open recorded WAV files directory in Windows Explorer"
+            >
+              Open Folder
+            </button>
+          )}
+
+          {activeArchiveTab === 'sessions' && (
+            <button
+              type="button"
+              className="ws-secondary-action"
+              onClick={() => {
+                const csv = historyService.exportSessionsCsv();
+                const blob = new Blob([csv], { type: 'text/csv' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `sessions_${new Date().toISOString().slice(0, 10)}.csv`;
+                a.click();
+                URL.revokeObjectURL(url);
+                showToast('Session history exported to CSV');
+              }}
+            >
+              Export Sessions CSV
+            </button>
+          )}
+
+          {activeArchiveTab === 'playback' && (
+            <button
+              type="button"
+              className="ws-secondary-action"
+              onClick={() => {
+                const csv = historyService.exportPlaybackCsv();
+                const blob = new Blob([csv], { type: 'text/csv' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `playback_log_${new Date().toISOString().slice(0, 10)}.csv`;
+                a.click();
+                URL.revokeObjectURL(url);
+                showToast('Playback log exported to CSV');
+              }}
+            >
+              Export Playback CSV
+            </button>
+          )}
 
           <button
             type="button"
@@ -216,9 +296,231 @@ export const RecordingsWorkspace: React.FC = () => {
         </div>
       </div>
 
-      {/* Main Archive Workstation Split */}
-      <div className="ws-recordings-layout">
-        {/* Left Column: Archive Browser */}
+      {/* Content depending on activeArchiveTab */}
+      {activeArchiveTab === 'recordings' && (
+        <div className="ws-recordings-layout">
+          {/* Left Column: Archive Browser */}
+          <div
+            style={{
+              border: '1px solid var(--ws-line)',
+              borderRadius: '7px',
+              background: 'var(--ws-panel)',
+              display: 'flex',
+              flexDirection: 'column',
+              overflow: 'hidden',
+            }}
+          >
+            <div className="ws-section-head">
+              <h2>Session Archives ({sessions.length})</h2>
+              <span>Newest First</span>
+            </div>
+
+            <div style={{ padding: '8px 10px', borderBottom: '1px solid var(--ws-line)' }}>
+              <input
+                type="text"
+                className="ws-input"
+                style={{ width: '100%', height: '28px' }}
+                placeholder="Search archive titles..."
+                value={searchFilter}
+                onChange={(e) => setSearchFilter(e.target.value)}
+              />
+            </div>
+
+            <div style={{ padding: '8px 10px', overflowY: 'auto', flex: 1 }}>
+              {filteredSessions.length === 0 ? (
+                <div className="ws-empty" style={{ minHeight: '140px' }}>
+                  <div>
+                    <strong>No Session Recordings</strong>
+                    <p>Click "Capture Master Output" to record live broadcast sessions to disk.</p>
+                  </div>
+                </div>
+              ) : (
+                filteredSessions.map((session) => {
+                  const isSelected = selectedSession?.id === session.id;
+                  return (
+                    <div
+                      key={session.id}
+                      className="ws-session-row"
+                      data-active={isSelected}
+                      onClick={() => handleSelectSession(session)}
+                    >
+                      <div>
+                        <div style={{ fontWeight: 650, fontSize: '12px', color: isSelected ? 'var(--ws-live)' : 'var(--ws-text)' }}>
+                          {session.title}
+                        </div>
+                        <div style={{ fontSize: '10px', color: 'var(--ws-muted)', marginTop: '2px' }}>
+                          {new Date(session.startedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} • {formatDuration(session.durationSeconds)} • {formatFileSize(session.fileSizeBytes)}
+                        </div>
+                      </div>
+
+                      <div style={{ textAlign: 'right' }}>
+                        <span className="ws-tag">SYNCED</span>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+
+          {/* Right Column: Player & Synced Transcript Timeline */}
+          <div
+            style={{
+              border: '1px solid var(--ws-line)',
+              borderRadius: '7px',
+              background: 'var(--ws-panel)',
+              display: 'flex',
+              flexDirection: 'column',
+              overflow: 'hidden',
+            }}
+          >
+            {selectedSession ? (
+              <>
+                {/* Header & Meta */}
+                <div
+                  style={{
+                    padding: '14px 16px',
+                    borderBottom: '1px solid var(--ws-line)',
+                    background: 'var(--ws-panel-2)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: '12px',
+                  }}
+                >
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span className="ws-badge" data-variant="live">MASTER TAPE</span>
+                      <span className="ws-tag">{selectedSession.mimeType || 'audio/webm'}</span>
+                    </div>
+                    <h3 style={{ margin: '6px 0 2px 0', fontSize: '16px', fontWeight: 760 }}>
+                      {selectedSession.title}
+                    </h3>
+                    <div style={{ fontSize: '11px', color: 'var(--ws-muted)' }}>
+                      Recorded on {new Date(selectedSession.startedAt).toLocaleString()} • Duration: {formatDuration(selectedSession.durationSeconds)}
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '6px' }}>
+                    <button type="button" className="ws-secondary-action" style={{ height: '30px', fontSize: '10px' }} onClick={handleExportAudio}>
+                      Download Audio
+                    </button>
+                    <button
+                      type="button"
+                      className="ws-secondary-action"
+                      style={{ height: '30px', fontSize: '10px' }}
+                      onClick={() => handleExportTranscript('srt')}
+                    >
+                      Export SRT
+                    </button>
+                  </div>
+                </div>
+
+                {/* Interactive Player Console */}
+                <div
+                  style={{
+                    padding: '12px 16px',
+                    borderBottom: '1px solid var(--ws-line)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '8px',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <button
+                      type="button"
+                      className="ws-primary-action"
+                      style={{ height: '32px', padding: '0 12px' }}
+                      onClick={handleTogglePlay}
+                    >
+                      {isPlaying ? 'Pause Tape' : '▶ Play Recording'}
+                    </button>
+
+                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--ws-muted)' }}>
+                      <strong style={{ color: 'var(--ws-text)' }}>{formatDuration(currentTimeSec)}</strong> / {formatDuration(selectedSession.durationSeconds)}
+                    </div>
+                  </div>
+
+                  {/* Seeker scrub bar */}
+                  <input
+                    type="range"
+                    min="0"
+                    max={selectedSession.durationSeconds || 1}
+                    step="0.1"
+                    value={currentTimeSec}
+                    onChange={(e) => handleSeek(parseFloat(e.target.value))}
+                    style={{ width: '100%', accentColor: 'var(--ws-live)' }}
+                    aria-label="Seek recorded audio timeline"
+                  />
+                </div>
+
+                {/* Synchronized Transcript Timeline */}
+                <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+                  <div className="ws-section-head">
+                    <h2>Synchronized Transcript Timeline</h2>
+                    <span>Click segment to seek audio</span>
+                  </div>
+
+                  <div style={{ padding: '10px 14px', overflowY: 'auto', flex: 1 }}>
+                    {allTranscriptSegments.length === 0 ? (
+                      <div className="ws-empty" style={{ minHeight: '120px' }}>
+                        <div>
+                          <strong>No Speech Transcripts Linked</strong>
+                          <p>Start live speech transcription while recording to create timestamped editorial markers.</p>
+                        </div>
+                      </div>
+                    ) : (
+                      allTranscriptSegments.map((seg) => {
+                        const segStartSec = seg.startMs / 1000;
+                        const segEndSec = seg.endMs / 1000;
+                        const isCurrent = currentTimeSec >= segStartSec && currentTimeSec <= segEndSec;
+
+                        return (
+                          <div
+                            key={seg.id}
+                            className="ws-segment"
+                            data-current={isCurrent}
+                            onClick={() => handleSeekToSegment(seg.startMs)}
+                            style={{
+                              cursor: 'pointer',
+                              background: isCurrent ? 'color-mix(in srgb, var(--ws-live) 8%, transparent)' : undefined,
+                              borderRadius: '5px',
+                              padding: '6px 8px',
+                            }}
+                          >
+                            <span className="ws-segment-time">
+                              {formatDuration(segStartSec)}
+                            </span>
+                            <span
+                              className="ws-segment-text"
+                              style={{ color: isCurrent ? 'var(--ws-live)' : undefined }}
+                            >
+                              {seg.text}
+                            </span>
+                            <span className="ws-confidence">
+                              {seg.confidence ? `${Math.round(seg.confidence * 100)}%` : 'ok'}
+                            </span>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+              </>
+            ) : (
+              <div className="ws-empty">
+                <div>
+                  <strong>No Recording Selected</strong>
+                  <p>Select a session recording from the archive list on the left to inspect audio and speech transcript timeline.</p>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Sessions History View */}
+      {activeArchiveTab === 'sessions' && (
         <div
           style={{
             border: '1px solid var(--ws-line)',
@@ -230,59 +532,101 @@ export const RecordingsWorkspace: React.FC = () => {
           }}
         >
           <div className="ws-section-head">
-            <h2>Session Archives ({sessions.length})</h2>
-            <span>Newest First</span>
+            <h2>Broadcast Transmission Log ({sessionHistory.length} sessions)</h2>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button
+                type="button"
+                className="ws-secondary-action"
+                style={{ height: '24px', fontSize: '10px' }}
+                onClick={() => {
+                  historyService.clear('SESSIONS');
+                  showToast('Broadcast session history cleared');
+                }}
+              >
+                Clear Log
+              </button>
+            </div>
           </div>
 
-          <div style={{ padding: '8px 10px', borderBottom: '1px solid var(--ws-line)' }}>
-            <input
-              type="text"
-              className="ws-input"
-              style={{ width: '100%', height: '28px' }}
-              placeholder="Search archive titles..."
-              value={searchFilter}
-              onChange={(e) => setSearchFilter(e.target.value)}
-            />
-          </div>
-
-          <div style={{ padding: '8px 10px', overflowY: 'auto', flex: 1 }}>
-            {filteredSessions.length === 0 ? (
-              <div className="ws-empty" style={{ minHeight: '140px' }}>
+          <div style={{ padding: '12px 14px', overflowY: 'auto', flex: 1 }}>
+            {sessionHistory.length === 0 ? (
+              <div className="ws-empty" style={{ minHeight: '180px' }}>
                 <div>
-                  <strong>No Session Recordings</strong>
-                  <p>Click "Capture Master Output" to record live broadcast sessions to disk.</p>
+                  <strong>No Broadcast Transmission History</strong>
+                  <p>When you start broadcasting on-air to SHOUTcast/Icecast, sessions are automatically logged here.</p>
                 </div>
               </div>
             ) : (
-              filteredSessions.map((session) => {
-                const isSelected = selectedSession?.id === session.id;
-                return (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                {sessionHistory.map((sess) => (
                   <div
-                    key={session.id}
-                    className="ws-session-row"
-                    data-active={isSelected}
-                    onClick={() => handleSelectSession(session)}
+                    key={sess.id}
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: '130px 1fr 100px 100px 90px 90px',
+                      alignItems: 'center',
+                      gap: '12px',
+                      padding: '8px 12px',
+                      borderRadius: '5px',
+                      border: '1px solid var(--ws-line)',
+                      background: 'var(--ws-panel-2)',
+                      fontSize: '11px',
+                    }}
                   >
                     <div>
-                      <div style={{ fontWeight: 650, fontSize: '12px', color: isSelected ? 'var(--ws-live)' : 'var(--ws-text)' }}>
-                        {session.title}
+                      <div style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--ws-muted)' }}>
+                        {new Date(sess.startedAt).toLocaleDateString()}
                       </div>
-                      <div style={{ fontSize: '10px', color: 'var(--ws-muted)', marginTop: '2px' }}>
-                        {new Date(session.startedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} • {formatDuration(session.durationSeconds)} • {formatFileSize(session.fileSizeBytes)}
+                      <div style={{ fontWeight: 650 }}>
+                        {new Date(sess.startedAt).toLocaleTimeString()}
                       </div>
                     </div>
 
-                    <div style={{ textAlign: 'right' }}>
-                      <span className="ws-tag">SYNCED</span>
+                    <div>
+                      <div style={{ fontWeight: 650, color: 'var(--ws-text)' }}>
+                        {sess.server}:{sess.port} {sess.stationName ? `(${sess.stationName})` : ''}
+                      </div>
+                      <div style={{ fontSize: '10px', color: 'var(--ws-muted)' }}>
+                        Stream #{sess.streamId} • Bitrate: {sess.bitrate} kbps • Audio: {sess.codec.toUpperCase()}
+                      </div>
+                    </div>
+
+                    <div style={{ fontFamily: 'var(--font-mono)' }}>
+                      {formatDuration(sess.durationSeconds)}
+                    </div>
+
+                    <div>
+                      <span
+                        className="ws-badge"
+                        data-variant={
+                          !sess.endedAt
+                            ? 'live'
+                            : sess.terminationReason === 'OPERATOR_STOP'
+                            ? 'ready'
+                            : 'danger'
+                        }
+                      >
+                        {!sess.endedAt ? 'ON AIR' : sess.terminationReason.replace('_', ' ')}
+                      </span>
+                    </div>
+
+                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--ws-muted)' }}>
+                      {formatFileSize(sess.bytesSent)}
+                    </div>
+
+                    <div style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--ws-muted)' }}>
+                      {sess.reconnectCount} rec.
                     </div>
                   </div>
-                );
-              })
+                ))}
+              </div>
             )}
           </div>
         </div>
+      )}
 
-        {/* Right Column: Player & Synced Transcript Timeline */}
+      {/* Playback History View */}
+      {activeArchiveTab === 'playback' && (
         <div
           style={{
             border: '1px solid var(--ws-line)',
@@ -293,149 +637,101 @@ export const RecordingsWorkspace: React.FC = () => {
             overflow: 'hidden',
           }}
         >
-          {selectedSession ? (
-            <>
-              {/* Header & Meta */}
-              <div
-                style={{
-                  padding: '14px 16px',
-                  borderBottom: '1px solid var(--ws-line)',
-                  background: 'var(--ws-panel-2)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  gap: '12px',
+          <div className="ws-section-head">
+            <h2>Music & Automation Playback Log ({playbackHistory.length} tracks)</h2>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button
+                type="button"
+                className="ws-secondary-action"
+                style={{ height: '24px', fontSize: '10px' }}
+                onClick={() => {
+                  historyService.clear('PLAYBACK');
+                  showToast('Playback log cleared');
                 }}
               >
+                Clear Log
+              </button>
+            </div>
+          </div>
+
+          <div style={{ padding: '12px 14px', overflowY: 'auto', flex: 1 }}>
+            {playbackHistory.length === 0 ? (
+              <div className="ws-empty" style={{ minHeight: '180px' }}>
                 <div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <span className="ws-badge" data-variant="live">MASTER TAPE</span>
-                    <span className="ws-tag">{selectedSession.mimeType || 'audio/webm'}</span>
-                  </div>
-                  <h3 style={{ margin: '6px 0 2px 0', fontSize: '16px', fontWeight: 760 }}>
-                    {selectedSession.title}
-                  </h3>
-                  <div style={{ fontSize: '11px', color: 'var(--ws-muted)' }}>
-                    Recorded on {new Date(selectedSession.startedAt).toLocaleString()} • Duration: {formatDuration(selectedSession.durationSeconds)}
-                  </div>
-                </div>
-
-                <div style={{ display: 'flex', gap: '6px' }}>
-                  <button type="button" className="ws-secondary-action" style={{ height: '30px', fontSize: '10px' }} onClick={handleExportAudio}>
-                    Download Audio
-                  </button>
-                  <button
-                    type="button"
-                    className="ws-secondary-action"
-                    style={{ height: '30px', fontSize: '10px' }}
-                    onClick={() => handleExportTranscript('srt')}
-                  >
-                    Export SRT
-                  </button>
+                  <strong>No Tracks Played Yet</strong>
+                  <p>When Deck A or Deck B plays audio files or automation runs, track play history is logged with duration and source.</p>
                 </div>
               </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                {playbackHistory.map((item) => {
+                  const playedSec = Math.floor(item.playedDurationMs / 1000);
+                  const totalSec = Math.floor(item.durationMs / 1000);
+                  const isFinished = !!item.endedAt;
 
-              {/* Interactive Player Console */}
-              <div
-                style={{
-                  padding: '12px 16px',
-                  borderBottom: '1px solid var(--ws-line)',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: '8px',
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <button
-                    type="button"
-                    className="ws-primary-action"
-                    style={{ height: '32px', padding: '0 12px' }}
-                    onClick={handleTogglePlay}
-                  >
-                    {isPlaying ? 'Pause Tape' : '▶ Play Recording'}
-                  </button>
-
-                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--ws-muted)' }}>
-                    <strong style={{ color: 'var(--ws-text)' }}>{formatDuration(currentTimeSec)}</strong> / {formatDuration(selectedSession.durationSeconds)}
-                  </div>
-                </div>
-
-                {/* Seeker scrub bar */}
-                <input
-                  type="range"
-                  min="0"
-                  max={selectedSession.durationSeconds || 1}
-                  step="0.1"
-                  value={currentTimeSec}
-                  onChange={(e) => handleSeek(parseFloat(e.target.value))}
-                  style={{ width: '100%', accentColor: 'var(--ws-live)' }}
-                  aria-label="Seek recorded audio timeline"
-                />
-              </div>
-
-              {/* Synchronized Transcript Timeline */}
-              <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
-                <div className="ws-section-head">
-                  <h2>Synchronized Transcript Timeline</h2>
-                  <span>Click segment to seek audio</span>
-                </div>
-
-                <div style={{ padding: '10px 14px', overflowY: 'auto', flex: 1 }}>
-                  {allTranscriptSegments.length === 0 ? (
-                    <div className="ws-empty" style={{ minHeight: '120px' }}>
+                  return (
+                    <div
+                      key={item.id}
+                      style={{
+                        display: 'grid',
+                        gridTemplateColumns: '70px 100px 1fr 100px 90px 100px',
+                        alignItems: 'center',
+                        gap: '12px',
+                        padding: '8px 12px',
+                        borderRadius: '5px',
+                        border: '1px solid var(--ws-line)',
+                        background: 'var(--ws-panel-2)',
+                        fontSize: '11px',
+                      }}
+                    >
                       <div>
-                        <strong>No Speech Transcripts Linked</strong>
-                        <p>Start live speech transcription while recording to create timestamped editorial markers.</p>
-                      </div>
-                    </div>
-                  ) : (
-                    allTranscriptSegments.map((seg) => {
-                      const segStartSec = seg.startMs / 1000;
-                      const segEndSec = seg.endMs / 1000;
-                      const isCurrent = currentTimeSec >= segStartSec && currentTimeSec <= segEndSec;
-
-                      return (
-                        <div
-                          key={seg.id}
-                          className="ws-segment"
-                          data-current={isCurrent}
-                          onClick={() => handleSeekToSegment(seg.startMs)}
+                        <span
+                          className="ws-tag"
                           style={{
-                            cursor: 'pointer',
-                            background: isCurrent ? 'color-mix(in srgb, var(--ws-live) 8%, transparent)' : undefined,
-                            borderRadius: '5px',
-                            padding: '6px 8px',
+                            color: item.deckId === 'deckA' ? 'var(--ws-accent-1)' : 'var(--ws-accent-2)',
                           }}
                         >
-                          <span className="ws-segment-time">
-                            {formatDuration(segStartSec)}
-                          </span>
-                          <span
-                            className="ws-segment-text"
-                            style={{ color: isCurrent ? 'var(--ws-live)' : undefined }}
-                          >
-                            {seg.text}
-                          </span>
-                          <span className="ws-confidence">
-                            {seg.confidence ? `${Math.round(seg.confidence * 100)}%` : 'ok'}
-                          </span>
+                          {item.deckId.toUpperCase()}
+                        </span>
+                      </div>
+
+                      <div style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--ws-muted)' }}>
+                        {new Date(item.startedAt).toLocaleTimeString()}
+                      </div>
+
+                      <div>
+                        <div style={{ fontWeight: 650, color: 'var(--ws-text)' }}>
+                          {item.title}
                         </div>
-                      );
-                    })
-                  )}
-                </div>
+                        <div style={{ fontSize: '10px', color: 'var(--ws-muted)' }}>
+                          {item.artist || 'Unknown Artist'} {item.album ? `• ${item.album}` : ''}
+                        </div>
+                      </div>
+
+                      <div style={{ fontFamily: 'var(--font-mono)', fontSize: '10px' }}>
+                        {formatDuration(playedSec)} / {formatDuration(totalSec)}
+                      </div>
+
+                      <div>
+                        <span
+                          className="ws-badge"
+                          data-variant={isFinished ? 'ready' : 'live'}
+                        >
+                          {isFinished ? 'DONE' : 'PLAYING'}
+                        </span>
+                      </div>
+
+                      <div style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--ws-muted)' }}>
+                        {item.triggerSource}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
-            </>
-          ) : (
-            <div className="ws-empty">
-              <div>
-                <strong>No Recording Selected</strong>
-                <p>Select a session recording from the archive list on the left to inspect audio and speech transcript timeline.</p>
-              </div>
-            </div>
-          )}
+            )}
+          </div>
         </div>
-      </div>
+      )}
 
       {toastMessage && <div className="ws-toast">{toastMessage}</div>}
     </section>

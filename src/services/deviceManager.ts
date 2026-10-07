@@ -1,4 +1,5 @@
 import { AudioDevice } from '../types/audio';
+import { eventBus } from './operations/eventBus';
 import { logger } from './logger';
 
 export class DeviceManager {
@@ -86,6 +87,7 @@ export class DeviceManager {
   }
 
   private notifyListeners() {
+    eventBus.emit('audio:device_changed', { devices: this.devices });
     this.listeners.forEach((listener) => {
       try {
         listener(this.devices);

@@ -122,6 +122,45 @@ export const ScheduleWorkspace: React.FC = () => {
     showToast(`Removed program: ${name}`);
   };
 
+  const handleTriggerManual = async (ev: ScheduleEvent) => {
+    await schedulerService.triggerEventManual(ev.id);
+    showToast(`Manually activated program: "${ev.title}"`);
+  };
+
+  const handleExportSchedule = () => {
+    const json = schedulerService.exportScheduleJson();
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `broadcst_schedule_${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast('Schedule exported to JSON');
+  };
+
+  const handleImportSchedule = () => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'application/json';
+    input.onchange = (e: any) => {
+      const file = e.target.files?.[0];
+      if (file) {
+        const reader = new FileReader();
+        reader.onload = (re) => {
+          const content = re.target?.result as string;
+          if (content && schedulerService.importScheduleJson(content)) {
+            showToast('Schedule successfully imported');
+          } else {
+            showToast('Failed to import schedule JSON');
+          }
+        };
+        reader.readAsText(file);
+      }
+    };
+    input.click();
+  };
+
   const toggleDaySelection = (dayNum: number) => {
     setFormDays((prev) =>
       prev.includes(dayNum) ? prev.filter((d) => d !== dayNum) : [...prev, dayNum].sort()
@@ -165,6 +204,22 @@ export const ScheduleWorkspace: React.FC = () => {
             </button>
           </div>
 
+          <button
+            type="button"
+            className="ws-secondary-action"
+            onClick={handleExportSchedule}
+            title="Export Schedule JSON"
+          >
+            Export JSON
+          </button>
+          <button
+            type="button"
+            className="ws-secondary-action"
+            onClick={handleImportSchedule}
+            title="Import Schedule JSON"
+          >
+            Import JSON
+          </button>
           <button
             type="button"
             className="ws-primary-action"
@@ -361,6 +416,15 @@ export const ScheduleWorkspace: React.FC = () => {
 
                     {/* Actions */}
                     <div style={{ textAlign: 'right', display: 'flex', gap: '4px', justifyContent: 'flex-end' }}>
+                      <button
+                        type="button"
+                        className="ws-mini-action"
+                        style={{ color: 'var(--ws-live)' }}
+                        onClick={() => handleTriggerManual(ev)}
+                        title="Immediately trigger this scheduled program block"
+                      >
+                        ▶ Run Now
+                      </button>
                       <button
                         type="button"
                         className="ws-mini-action"

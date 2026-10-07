@@ -96,12 +96,22 @@ export interface StationProfile {
   isActive: boolean;
 }
 
+export interface DeviceRecoveryResult {
+  captureStatus: string;
+  activeInputDevice: string | null;
+  monitorStatus: string;
+  activeOutputDevice: string | null;
+  recovered: boolean;
+  message: string;
+}
+
 export interface CommandMap {
   // Broadcast Controls
   'broadcast.start': { params: { config?: ShoutcastConfig } | void; result: BroadcastStatus };
   'broadcast.stop': { params: void; result: BroadcastStatus };
   'broadcast.reconnect': { params: void; result: BroadcastStatus };
   'broadcast.get_status': { params: void; result: BroadcastStatus };
+  'broadcast.update_config': { params: { config: ShoutcastConfig }; result: BroadcastStatus };
   'broadcast.preflight_validate': { params: { config?: ShoutcastConfig } | void; result: BroadcastPreflightError[] };
 
   // Audio Controls
@@ -109,6 +119,7 @@ export interface CommandMap {
   'audio.get_output_devices': { params: void; result: AudioDevice[] };
   'audio.start_monitor': { params: { deviceId?: string }; result: string };
   'audio.stop_monitor': { params: void; result: void };
+  'audio.recover_devices': { params: { preferredInput?: string; preferredOutput?: string } | void; result: DeviceRecoveryResult };
   'audio.set_gain': { params: { channelId: string; gainDb: number }; result: void };
   'audio.set_fader': { params: { channelId: string; level: number }; result: void };
   'audio.mute': { params: { channelId: string; muted: boolean }; result: void };

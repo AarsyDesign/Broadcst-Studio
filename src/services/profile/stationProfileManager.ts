@@ -1,6 +1,8 @@
 import { StationProfile } from './types';
 import { shoutcastService } from '../shoutcastService';
 import { icecastService } from '../icecast/icecastService';
+import { eventBus } from '../operations/eventBus';
+import { ipc } from '../ipc';
 import { logger } from '../logger';
 
 const DEFAULT_PROFILES: StationProfile[] = [
@@ -210,6 +212,14 @@ class StationProfileManager {
     shoutcastService.updateConfig(target.shoutcastConfig);
     icecastService.updateConfig(target.icecastConfig);
 
+    if (ipc.isNative()) {
+      try {
+        await ipc.invoke('broadcast.update_config', { config: target.shoutcastConfig });
+      } catch (err) {
+        logger.error('StationProfileManager', 'Failed updating native shoutcast config', { error: err });
+      }
+    }
+
     // Apply metadata
     shoutcastService.setMetadata({
       title: target.defaultShowTitle,
@@ -222,6 +232,7 @@ class StationProfileManager {
       stationName: target.name,
     });
 
+    eventBus.emit('profile:switched', { activeProfile: target });
     logger.info('StationProfileManager', `Switched active station profile to "${target.name}" (${target.callsign})`);
     this.notify();
     return true;

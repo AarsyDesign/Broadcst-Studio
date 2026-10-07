@@ -7,6 +7,9 @@ import { AudioCodecType, CODEC_PROFILES } from '../types/codecs';
 import { ShoutcastConfig, TrackMetadata } from '../types/broadcast';
 import { transcriptionService } from '../services/transcription/transcriptionService';
 import { controlApi } from '../services/controlApi';
+import { recoveryManager, SystemHealthStatus } from '../services/recovery/recoveryManager';
+import { historyService } from '../services/history/historyService';
+import { OperationAuditLogItem } from '../services/history/types';
 
 type SettingsSection =
   | 'station'
@@ -17,6 +20,7 @@ type SettingsSection =
   | 'plugins'
   | 'ai'
   | 'appearance'
+  | 'audit'
   | 'developer';
 
 interface SettingsWorkspaceProps {
@@ -46,6 +50,13 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
   const [newProfileCallsign, setNewProfileCallsign] = useState('');
   const [newProfileGenre, setNewProfileGenre] = useState('Talk & Music');
 
+  const [auditLogs, setAuditLogs] = useState<OperationAuditLogItem[]>(historyService.getAuditLogs());
+  const [auditSearch, setAuditSearch] = useState('');
+  const [recoveryStatus, setRecoveryStatus] = useState<SystemHealthStatus>(recoveryManager.getStatus());
+  const [lastRecoveryMsg, setLastRecoveryMsg] = useState(recoveryManager.getLastResult()?.message || '');
+  const [recoveryCount, setRecoveryCount] = useState(recoveryManager.getRecoveryCount());
+  const [isRecovering, setIsRecovering] = useState(false);
+
   useEffect(() => {
     const unsub = stationProfileManager.subscribe((list, active) => {
       setProfiles(list);
@@ -57,7 +68,21 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
       setSelectedBitrate(active.defaultBitrate);
     });
 
-    return () => unsub();
+    const unsubHistory = historyService.subscribe(() => {
+      setAuditLogs(historyService.getAuditLogs());
+    });
+
+    const unsubRecovery = recoveryManager.subscribe((st, res) => {
+      setRecoveryStatus(st);
+      if (res?.message) setLastRecoveryMsg(res.message);
+      setRecoveryCount(recoveryManager.getRecoveryCount());
+    });
+
+    return () => {
+      unsub();
+      unsubHistory();
+      unsubRecovery();
+    };
   }, []);
 
   const showToast = (msg: string) => {
@@ -145,8 +170,70 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
     { id: 'plugins', label: 'Plugin Environment', kicker: 'Extensibility' },
     { id: 'ai', label: 'AI & Control API', kicker: 'Security' },
     { id: 'appearance', label: 'Appearance & Motion', kicker: 'Interface' },
+    { id: 'audit', label: 'Operations & Audit Log', kicker: 'Traceability' },
     { id: 'developer', label: 'Developer & System', kicker: 'Diagnostics' },
   ];
+
+  const handleExportProfiles = () => {
+    const json = stationProfileManager.exportProfilesJson();
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `station_profiles_${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast('Station profiles exported');
+  };
+
+  const handleImportProfiles = () => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'application/json';
+    input.onchange = (e: any) => {
+      const file = e.target.files?.[0];
+      if (file) {
+        const reader = new FileReader();
+        reader.onload = (re) => {
+          const content = re.target?.result as string;
+          if (content && stationProfileManager.importProfilesJson(content)) {
+            showToast('Profiles imported successfully');
+          } else {
+            showToast('Failed to import profile JSON');
+          }
+        };
+        reader.readAsText(file);
+      }
+    };
+    input.click();
+  };
+
+  const handleDuplicateProfile = () => {
+    const copy = stationProfileManager.duplicateProfile(activeProfile.id);
+    if (copy) {
+      showToast(`Duplicated profile: ${copy.name}`);
+    }
+  };
+
+  const handleTriggerRecovery = async () => {
+    setIsRecovering(true);
+    showToast('Initiating hardware recovery...');
+    const res = await recoveryManager.recoverAudioHardware(undefined, undefined, 'SETTINGS_MANUAL_TRIGGER');
+    setIsRecovering(false);
+    showToast(res.message);
+  };
+
+  const handleExportAuditCsv = () => {
+    const csv = historyService.exportAuditCsv();
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `operations_audit_${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast('Audit log exported to CSV');
+  };
 
   return (
     <section className="ws-workspace" style={{ display: 'grid', gridTemplateRows: 'auto minmax(0, 1fr)', gap: '14px', height: '100%' }}>
@@ -196,14 +283,43 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
             <form onSubmit={handleSaveStation} style={{ maxWidth: '640px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
                 <h2 style={{ fontSize: '15px', fontWeight: 760, margin: 0 }}>Station Profiles & Identity</h2>
-                <button
-                  type="button"
-                  className="ws-secondary-action"
-                  style={{ height: '28px', fontSize: '10px' }}
-                  onClick={() => setShowCreateProfileModal(true)}
-                >
-                  + New Profile
-                </button>
+                <div style={{ display: 'flex', gap: '6px' }}>
+                  <button
+                    type="button"
+                    className="ws-secondary-action"
+                    style={{ height: '28px', fontSize: '10px' }}
+                    onClick={handleDuplicateProfile}
+                    title="Duplicate active profile"
+                  >
+                    Duplicate
+                  </button>
+                  <button
+                    type="button"
+                    className="ws-secondary-action"
+                    style={{ height: '28px', fontSize: '10px' }}
+                    onClick={handleExportProfiles}
+                    title="Export profiles JSON"
+                  >
+                    Export JSON
+                  </button>
+                  <button
+                    type="button"
+                    className="ws-secondary-action"
+                    style={{ height: '28px', fontSize: '10px' }}
+                    onClick={handleImportProfiles}
+                    title="Import profiles JSON"
+                  >
+                    Import JSON
+                  </button>
+                  <button
+                    type="button"
+                    className="ws-secondary-action"
+                    style={{ height: '28px', fontSize: '10px' }}
+                    onClick={() => setShowCreateProfileModal(true)}
+                  >
+                    + New Profile
+                  </button>
+                </div>
               </div>
 
               <div className="ws-form-group">
@@ -518,6 +634,44 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
                   <option value="safe">Conservative Buffer (100ms - Anti-Underrun)</option>
                 </select>
               </div>
+
+              {/* Hardware Disaster Recovery Panel */}
+              <div style={{ borderTop: '1px solid var(--ws-line)', paddingTop: '16px', marginTop: '16px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                  <h3 style={{ fontSize: '13px', fontWeight: 700, margin: 0 }}>Hardware Disaster Recovery</h3>
+                  <span className="ws-badge" data-variant={recoveryStatus === 'HEALTHY' ? 'live' : 'offline'}>
+                    {recoveryStatus === 'HEALTHY' ? 'HEALTHY' : recoveryStatus === 'RECOVERING' ? 'RECOVERING...' : 'DEGRADED'}
+                  </span>
+                </div>
+                <p style={{ fontSize: '11px', color: 'var(--ws-muted)', margin: '0 0 10px 0' }}>
+                  Automatic driver recovery re-attaches audio streams if a USB microphone or monitor speaker disconnects or stalls.
+                </p>
+                {lastRecoveryMsg && (
+                  <div style={{ fontSize: '11px', fontFamily: 'var(--font-mono)', color: 'var(--ws-subtle)', background: 'var(--ws-panel-2)', padding: '6px 10px', borderRadius: '4px', marginBottom: '10px' }}>
+                    Status: {lastRecoveryMsg} ({recoveryCount} recovery cycles)
+                  </div>
+                )}
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button
+                    type="button"
+                    className="ws-secondary-action"
+                    onClick={handleTriggerRecovery}
+                    disabled={isRecovering}
+                  >
+                    {isRecovering ? 'Recovering...' : '⟳ Trigger Hardware Recovery'}
+                  </button>
+                  <button
+                    type="button"
+                    className="ws-secondary-action"
+                    onClick={() => {
+                      recoveryManager.restoreWorkstationState();
+                      showToast('Workstation state re-synchronized');
+                    }}
+                  >
+                    Restore Startup State
+                  </button>
+                </div>
+              </div>
             </div>
           )}
 
@@ -662,6 +816,107 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
                 <div style={{ fontSize: '11px', color: 'var(--ws-muted)', lineHeight: 1.5 }}>
                   Broadcst Studio uses Motion 3 (real-time data-driven meters and waveform animation). When system <code>prefers-reduced-motion</code> is active, all continuous animations are automatically disabled.
                 </div>
+              </div>
+            </div>
+          )}
+
+          {/* 9. OPERATIONS AUDIT LOG */}
+          {activeSection === 'audit' && (
+            <div style={{ maxWidth: '800px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                <div>
+                  <h2 style={{ fontSize: '15px', fontWeight: 760, margin: 0 }}>Operations & Audit History</h2>
+                  <div style={{ fontSize: '11px', color: 'var(--ws-muted)' }}>
+                    Authoritative execution trace for operator macros, hotkeys, schedules, and automation triggers.
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: '6px' }}>
+                  <button type="button" className="ws-secondary-action" onClick={handleExportAuditCsv}>
+                    Export CSV
+                  </button>
+                  <button
+                    type="button"
+                    className="ws-secondary-action"
+                    style={{ color: 'var(--ws-danger)' }}
+                    onClick={() => {
+                      historyService.clear('AUDIT');
+                      showToast('Audit log cleared');
+                    }}
+                  >
+                    Clear Log
+                  </button>
+                </div>
+              </div>
+
+              <div style={{ marginBottom: '12px' }}>
+                <input
+                  type="text"
+                  className="ws-input"
+                  style={{ width: '100%' }}
+                  placeholder="Filter audit logs by action or caller..."
+                  value={auditSearch}
+                  onChange={(e) => setAuditSearch(e.target.value)}
+                />
+              </div>
+
+              <div
+                style={{
+                  border: '1px solid var(--ws-line)',
+                  borderRadius: '6px',
+                  background: 'var(--ws-panel-2)',
+                  maxHeight: '380px',
+                  overflowY: 'auto',
+                }}
+              >
+                {auditLogs.length === 0 ? (
+                  <div style={{ padding: '24px', textAlign: 'center', color: 'var(--ws-muted)', fontSize: '12px' }}>
+                    No operations recorded yet. Dispatched actions from UI, hotkeys, schedule, or automation will appear here.
+                  </div>
+                ) : (
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px' }}>
+                    <thead>
+                      <tr style={{ borderBottom: '1px solid var(--ws-line)', textAlign: 'left', color: 'var(--ws-subtle)' }}>
+                        <th style={{ padding: '8px 10px' }}>Time</th>
+                        <th style={{ padding: '8px 10px' }}>Action</th>
+                        <th style={{ padding: '8px 10px' }}>Caller</th>
+                        <th style={{ padding: '8px 10px' }}>Duration</th>
+                        <th style={{ padding: '8px 10px' }}>Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {auditLogs
+                        .filter((l) => {
+                          if (!auditSearch) return true;
+                          const q = auditSearch.toLowerCase();
+                          return l.action.toLowerCase().includes(q) || l.caller.toLowerCase().includes(q);
+                        })
+                        .map((entry) => (
+                          <tr key={entry.id} style={{ borderBottom: '1px solid var(--ws-line)' }}>
+                            <td style={{ padding: '6px 10px', fontFamily: 'var(--font-mono)' }}>
+                              {new Date(entry.timestamp).toLocaleTimeString()}
+                            </td>
+                            <td style={{ padding: '6px 10px', fontWeight: 600 }}>{entry.action}</td>
+                            <td style={{ padding: '6px 10px', color: 'var(--ws-muted)' }}>{entry.caller}</td>
+                            <td style={{ padding: '6px 10px', fontFamily: 'var(--font-mono)' }}>{entry.durationMs}ms</td>
+                            <td style={{ padding: '6px 10px' }}>
+                              <span
+                                style={{
+                                  fontSize: '9px',
+                                  fontWeight: 700,
+                                  padding: '2px 6px',
+                                  borderRadius: '3px',
+                                  background: entry.success ? 'rgba(34, 197, 94, 0.15)' : 'rgba(239, 68, 68, 0.15)',
+                                  color: entry.success ? 'var(--ws-live)' : 'var(--ws-danger)',
+                                }}
+                              >
+                                {entry.success ? 'SUCCESS' : 'FAILED'}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+                )}
               </div>
             </div>
           )}
