@@ -1,0 +1,21 @@
+{
+  "name": "@broadcst/plugin-sdk",
+  "version": "1.0.0",
+  "description": "Official TypeScript SDK for Broadcst Studio broadcast plugins",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "type": "module",
+  "scripts": {
+    "build": "tsc"
+  },
+  "keywords": [
+    "broadcst",
+    "broadcast",
+    "plugin",
+    "sdk",
+    "radio",
+    "audio"
+  ],
+  "author": "AarsyDesign",
+  "license": "MIT"
+}

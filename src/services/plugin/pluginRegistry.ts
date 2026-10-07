@@ -1,195 +1,150 @@
-import { PluginManifest } from './types';
+import {
+  Plugin,
+  PluginInstance,
+  PluginManifest,
+  ValidationResult,
+  validateManifest,
+} from './types';
 import { pluginHost } from './pluginHost';
 import { logger } from '../logger';
 
-export interface RegistryPluginItem {
+// Import official example plugins for local development testing
+import { voiceProcessorPlugin } from '../../../plugins/examples/example-audio-processor';
+import { metadataSyncPlugin } from '../../../plugins/examples/example-metadata-sync';
+import { stationIdAutomationPlugin } from '../../../plugins/examples/example-station-id-automation';
+import { silenceDetectorPlugin } from '../../../plugins/examples/example-silence-detector';
+
+export interface SamplePluginEntry {
   manifest: PluginManifest;
-  author: string;
-  sourceStatus: 'Verified Local' | 'Community Prototype' | 'Official';
-  featured: boolean;
-  tags: string[];
+  plugin: Plugin;
+  isOfficialExample: boolean;
 }
 
-const REGISTRY_CATALOG: RegistryPluginItem[] = [
+const LOCAL_SAMPLE_PLUGINS: SamplePluginEntry[] = [
   {
-    manifest: {
-      id: 'broadcast-voice-processor',
-      name: 'Broadcast Master Voice Processor',
-      version: '1.2.0',
-      description: '3-band dynamics compressor, expander/gate, and automatic gain leveler designed for broadcast microphone signals.',
-      category: 'audio_effect',
-      author: 'Broadcast Audio Labs',
-      permissions: ['audio_process'],
-      entryPoint: 'voice_processor.js',
-    },
-    author: 'Broadcast Audio Labs',
-    sourceStatus: 'Official',
-    featured: true,
-    tags: ['voice', 'compressor', 'dynamics', 'eq'],
+    manifest: voiceProcessorPlugin.manifest,
+    plugin: voiceProcessorPlugin,
+    isOfficialExample: true,
   },
   {
-    manifest: {
-      id: 'ebu-r128-loudness-meter',
-      name: 'EBU R128 LUFS Loudness Radar',
-      version: '1.1.0',
-      description: 'Real-time integrated, momentary, and short-term LUFS loudness monitor compliant with ITU-R BS.1770-4 standards.',
-      category: 'utility',
-      author: 'Broadcast Norm Group',
-      permissions: ['audio_process'],
-      entryPoint: 'lufs_radar.js',
-    },
-    author: 'Broadcast Norm Group',
-    sourceStatus: 'Official',
-    featured: true,
-    tags: ['loudness', 'lufs', 'meter', 'broadcast-standard'],
+    manifest: metadataSyncPlugin.manifest,
+    plugin: metadataSyncPlugin,
+    isOfficialExample: true,
   },
   {
-    manifest: {
-      id: 'azuracast-metadata-bridge',
-      name: 'AzuraCast & LibreTime Metadata Bridge',
-      version: '2.0.1',
-      description: 'Bidirectional sync of track titles, album art, and server status with AzuraCast radio servers.',
-      category: 'metadata',
-      author: 'OpenRadio Project',
-      permissions: ['metadata_read', 'metadata_write', 'network_out'],
-      entryPoint: 'azuracast.js',
-    },
-    author: 'OpenRadio Project',
-    sourceStatus: 'Community Prototype',
-    featured: true,
-    tags: ['azuracast', 'libretime', 'metadata', 'automation'],
+    manifest: stationIdAutomationPlugin.manifest,
+    plugin: stationIdAutomationPlugin,
+    isOfficialExample: true,
   },
   {
-    manifest: {
-      id: 'silence-detector-failover',
-      name: 'Emergency Silence Detector & Auto-Failover',
-      version: '1.3.0',
-      description: 'Monitors master audio bus and automatically fires emergency backup music if silence drops below -48 dBFS for more than 10s.',
-      category: 'automation',
-      author: 'Reliability Audio',
-      permissions: ['audio_process', 'network_out'],
-      entryPoint: 'silence_guard.js',
-    },
-    author: 'Reliability Audio',
-    sourceStatus: 'Verified Local',
-    featured: false,
-    tags: ['silence', 'failover', 'backup', 'automation'],
-  },
-  {
-    manifest: {
-      id: 'discord-broadcast-bot',
-      name: 'Discord On-Air Live Webhook',
-      version: '1.0.4',
-      description: 'Automatically posts rich Discord embeds with now-playing titles and direct stream listen links when broadcast goes on air.',
-      category: 'automation',
-      author: 'Community Bots',
-      permissions: ['metadata_read', 'network_out'],
-      entryPoint: 'discord_webhook.js',
-    },
-    author: 'Community Bots',
-    sourceStatus: 'Community Prototype',
-    featured: false,
-    tags: ['discord', 'webhook', 'social', 'notifications'],
-  },
-  {
-    manifest: {
-      id: 'transcript-chapter-indexer',
-      name: 'Live Transcript Chapter Indexer',
-      version: '1.0.0',
-      description: 'Detects topic transitions in live speech transcript stream and marks chapter markers for session archives.',
-      category: 'transcript',
-      author: 'Editorial Audio Tools',
-      permissions: ['metadata_write'],
-      entryPoint: 'chapter_indexer.js',
-    },
-    author: 'Editorial Audio Tools',
-    sourceStatus: 'Verified Local',
-    featured: true,
-    tags: ['transcript', 'chapters', 'editorial', 'archive'],
-  },
-  {
-    manifest: {
-      id: 'parametric-5band-eq',
-      name: 'Parametric 5-Band Studio Equalizer',
-      version: '1.0.0',
-      description: 'High-precision parametric tone shaping with low-cut rumble filter, bell mid filters, and air band high shelf.',
-      category: 'audio_effect',
-      author: 'Studio Audio Tools',
-      permissions: ['audio_process'],
-      entryPoint: 'eq_5band.js',
-    },
-    author: 'Studio Audio Tools',
-    sourceStatus: 'Verified Local',
-    featured: false,
-    tags: ['eq', 'parametric', 'filter', 'studio'],
-  },
-  {
-    manifest: {
-      id: 'icecast-standby-switcher',
-      name: 'Icecast Standby Redundancy Switcher',
-      version: '1.1.2',
-      description: 'High-availability stream failover controller that switches connection to standby Icecast mount if primary socket drops.',
-      category: 'output',
-      author: 'StreamEngine Systems',
-      permissions: ['network_out'],
-      entryPoint: 'icecast_standby.js',
-    },
-    author: 'StreamEngine Systems',
-    sourceStatus: 'Official',
-    featured: false,
-    tags: ['icecast', 'redundancy', 'failover', 'output'],
+    manifest: silenceDetectorPlugin.manifest,
+    plugin: silenceDetectorPlugin,
+    isOfficialExample: true,
   },
 ];
 
+/**
+ * Local-First Plugin Registry
+ *
+ * Manages plugin discovery, validation, installation, and removal.
+ * No online marketplace or cloud telemetry.
+ */
 class PluginRegistry {
-  private catalog: RegistryPluginItem[] = [...REGISTRY_CATALOG];
   private listeners: (() => void)[] = [];
 
-  public getCatalog(): RegistryPluginItem[] {
-    return [...this.catalog];
+  constructor() {
+    this.initializeDefaultPlugins();
   }
 
-  public isInstalled(pluginId: string): boolean {
-    const installed = pluginHost.getPlugins();
-    return installed.some((p) => p.manifest.id === pluginId);
+  private async initializeDefaultPlugins() {
+    // Automatically load the example plugins into the host in ready/disabled state
+    for (const sample of LOCAL_SAMPLE_PLUGINS) {
+      await pluginHost.registerPlugin(sample.manifest, sample.plugin);
+    }
   }
 
-  public async installPlugin(pluginId: string): Promise<boolean> {
-    const item = this.catalog.find((c) => c.manifest.id === pluginId);
-    if (!item) {
-      logger.warn('PluginRegistry', `Plugin ID '${pluginId}' not found in registry`);
-      return false;
+  public getInstalled(): PluginInstance[] {
+    return pluginHost.getPlugins();
+  }
+
+  public getAvailableSamples(): SamplePluginEntry[] {
+    return [...LOCAL_SAMPLE_PLUGINS];
+  }
+
+  public isInstalled(id: string): boolean {
+    return !!pluginHost.getPlugin(id);
+  }
+
+  public validate(candidate: unknown): ValidationResult {
+    return validateManifest(candidate);
+  }
+
+  /**
+   * Installs or sideloads a plugin from a JSON manifest.
+   */
+  public async installFromManifest(
+    manifestCandidate: unknown,
+    customPluginImpl?: Plugin
+  ): Promise<{ success: boolean; error?: string; validation?: ValidationResult }> {
+    const valResult = this.validate(manifestCandidate);
+    if (!valResult.valid || !valResult.manifest) {
+      return {
+        success: false,
+        error: `Invalid manifest: ${valResult.errors.join('; ')}`,
+        validation: valResult,
+      };
     }
 
-    try {
-      await pluginHost.registerPlugin(item.manifest);
-      await pluginHost.enablePlugin(item.manifest.id);
-      logger.info('PluginRegistry', `Successfully installed and enabled plugin: ${item.manifest.name}`);
+    const regResult = await pluginHost.registerPlugin(valResult.manifest, customPluginImpl);
+    if (!regResult.success) {
+      return {
+        success: false,
+        error: regResult.error,
+        validation: valResult,
+      };
+    }
+
+    logger.info('PluginRegistry', `Installed plugin: ${valResult.manifest.name} (${valResult.manifest.id})`);
+    this.notify();
+    return { success: true, validation: valResult };
+  }
+
+  public async installSample(pluginId: string): Promise<boolean> {
+    const found = LOCAL_SAMPLE_PLUGINS.find((s) => s.manifest.id === pluginId);
+    if (!found) return false;
+
+    const res = await pluginHost.registerPlugin(found.manifest, found.plugin);
+    if (res.success) {
       this.notify();
       return true;
-    } catch (err) {
-      logger.error('PluginRegistry', `Failed installing plugin '${pluginId}'`, { error: err });
-      return false;
     }
+    return false;
+  }
+
+  public async enablePlugin(pluginId: string): Promise<boolean> {
+    const ok = await pluginHost.enablePlugin(pluginId);
+    this.notify();
+    return ok;
+  }
+
+  public async disablePlugin(pluginId: string): Promise<boolean> {
+    const ok = await pluginHost.disablePlugin(pluginId);
+    this.notify();
+    return ok;
   }
 
   public async uninstallPlugin(pluginId: string): Promise<boolean> {
-    try {
-      await pluginHost.disablePlugin(pluginId);
-      await pluginHost.unregisterPlugin(pluginId);
-      logger.info('PluginRegistry', `Uninstalled plugin: ${pluginId}`);
-      this.notify();
-      return true;
-    } catch (err) {
-      logger.error('PluginRegistry', `Failed uninstalling plugin '${pluginId}'`, { error: err });
-      return false;
-    }
+    const ok = await pluginHost.unregisterPlugin(pluginId);
+    this.notify();
+    return ok;
   }
 
   public subscribe(listener: () => void): () => void {
     this.listeners.push(listener);
+    const hostUnsub = pluginHost.subscribe(() => listener());
     return () => {
       this.listeners = this.listeners.filter((l) => l !== listener);
+      hostUnsub();
     };
   }
 

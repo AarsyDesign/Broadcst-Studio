@@ -1,0 +1,18 @@
+{
+  "id": "org.broadcst.example.metadata-sync",
+  "name": "Now Playing Webhook & RDS Bridge",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "author": "Broadcst Community Examples",
+  "description": "Example metadata plugin demonstrating event-driven track change hooks and external syndication.",
+  "type": "METADATA",
+  "permissions": [
+    "metadata.read",
+    "metadata.write",
+    "network"
+  ],
+  "entryPoint": "index.ts",
+  "homepage": "https://github.com/AarsyDesign/Broadcst-Studio",
+  "license": "MIT",
+  "tags": ["metadata", "webhook", "now-playing", "syndication"]
+}

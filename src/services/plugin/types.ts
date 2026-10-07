@@ -1,51 +1,40 @@
-export type PluginCategory =
-  | 'audio_effect'
-  | 'audio_source'
-  | 'output'
-  | 'metadata'
-  | 'automation'
-  | 'transcript'
-  | 'utility';
+/**
+ * Broadcst Studio Host Plugin Types
+ * Re-exports public SDK types and defines internal host runtime interfaces.
+ */
 
-export type PluginPermission =
-  | 'audio_process'
-  | 'metadata_read'
-  | 'metadata_write'
-  | 'network_out'
-  | 'storage';
+export * from '../../../packages/plugin-sdk/src';
 
-export type PluginLifecycleStatus =
-  | 'STOPPED'
-  | 'STARTING'
-  | 'RUNNING'
-  | 'ERROR'
-  | 'CRASHED';
+import {
+  Plugin,
+  PluginCompatibility,
+  PluginLifecycleState,
+  PluginManifest,
+} from '../../../packages/plugin-sdk/src';
 
-export interface PluginManifest {
-  id: string;
-  name: string;
-  version: string;
-  author: string;
-  description: string;
-  category: PluginCategory;
-  permissions: PluginPermission[];
-  homepage?: string;
-  entryPoint?: string;
-}
-
+/**
+ * Host-managed runtime instance for an installed plugin.
+ */
 export interface PluginInstance {
   manifest: PluginManifest;
-  status: PluginLifecycleStatus;
+  state: PluginLifecycleState;
+  compatibility: PluginCompatibility;
   enabled: boolean;
+  plugin?: Plugin;
   errorMessage?: string;
   lastExecutionMs?: number;
-  /** In-process prototype simulation status vs isolated native worker */
+  installedAt: number;
+  validationWarnings?: string[];
+  /** Honest architecture flag: current in-process execution vs future isolated worker */
   runtimeMode: 'in_process_prototype' | 'isolated_worker';
 }
 
-export interface PluginExecutionContext {
-  log: (level: 'info' | 'warn' | 'error', message: string) => void;
-  getBroadcastState: () => string;
-  getAudioMetrics: () => { peakDb: number; rmsDb: number };
-  pushMetadata: (title: string, artist: string) => void;
+/**
+ * Package metadata for a local .bcsplugin archive or directory.
+ */
+export interface PluginPackageMetadata {
+  manifest: PluginManifest;
+  packageFormatVersion: number;
+  entryPointCode?: string;
+  sourceDirectory?: string;
 }

@@ -1,276 +1,438 @@
-import type { PluginInstance, PluginManifest } from './types';
+import {
+  AudioMetricsReadout,
+  Plugin,
+  PluginContext,
+  PluginEventMap,
+  PluginEventName,
+  PluginInstance,
+  PluginManifest,
+  PluginStateStore,
+  validateManifest,
+} from './types';
+import { permissionManager } from './permissionManager';
+import { controlApi } from '../controlApi';
+import { eventBus } from '../operations/eventBus';
 import { logger } from '../logger';
-import { shoutcastService } from '../shoutcastService';
 import { audioEngine } from '../audioEngine';
 
+/**
+ * Broadcst Studio Plugin Host
+ *
+ * ARCHITECTURAL HONESTY:
+ * Current runtime executes plugins in-process within the developer environment.
+ * In-process execution is NOT an isolated security sandbox.
+ * The production target architecture isolates community plugins inside
+ * separate WebAssembly workers / child processes with bounded memory and capabilities.
+ */
 class PluginHost {
-  private plugins: Map<string, PluginInstance> = new Map();
+  private instances: Map<string, PluginInstance> = new Map();
+  private storage: Map<string, Map<string, unknown>> = new Map();
+  private utilityTimerId: number | null = null;
   private listeners: Set<(plugins: PluginInstance[]) => void> = new Set();
-  private intervals: Map<string, number> = new Map();
+  private busUnsubscribers: (() => void)[] = [];
 
   constructor() {
-    this.registerBuiltInPlugins();
+    this.setupApplicationEventBridging();
+    this.startUtilityTicker();
   }
 
-  private registerBuiltInPlugins() {
-    const builtIns: PluginInstance[] = [
-      {
-        manifest: {
-          id: 'plugin-auto-ducking',
-          name: 'Studio Auto-Ducking',
-          version: '1.2.0',
-          author: 'Broadcast Ecosystem Team',
-          description: 'Automatically ducks background music by -12dB when speech activity is detected on mic.',
-          category: 'audio_effect',
-          permissions: ['audio_process'],
-        },
-        status: 'STOPPED',
-        enabled: false,
-        runtimeMode: 'in_process_prototype',
-      },
-      {
-        manifest: {
-          id: 'plugin-voice-leveler',
-          name: 'Dynamic Voice Leveler',
-          version: '2.0.1',
-          author: 'Broadcast Audio Labs',
-          description: 'Multiband voice broadcast leveling to ensure steady loudness and vocal presence.',
-          category: 'audio_effect',
-          permissions: ['audio_process'],
-        },
-        status: 'RUNNING',
-        enabled: true,
-        runtimeMode: 'in_process_prototype',
-      },
-      {
-        manifest: {
-          id: 'plugin-now-playing-poller',
-          name: 'Now Playing RSS/JSON Poller',
-          version: '1.0.4',
-          author: 'StreamTools Community',
-          description: 'Periodically polls radio automation software API and updates SHOUTcast ICY metadata.',
-          category: 'metadata',
-          permissions: ['network_out', 'metadata_write'],
-        },
-        status: 'RUNNING',
-        enabled: true,
-        runtimeMode: 'in_process_prototype',
-      },
-      {
-        manifest: {
-          id: 'plugin-backup-stream',
-          name: 'Redundant Stream Mirror',
-          version: '0.9.0',
-          author: 'Infrastructure Core',
-          description: 'Forks encoder packets to a secondary standby streaming server for high availability.',
-          category: 'output',
-          permissions: ['network_out'],
-        },
-        status: 'STOPPED',
-        enabled: false,
-        runtimeMode: 'in_process_prototype',
-      },
+  /**
+   * Bridges internal workstation events to the public Plugin Event API.
+   */
+  private setupApplicationEventBridging() {
+    // 1. Deck track started -> track.changed
+    const unsubTrack = eventBus.on('deck:track_started', (payload: any) => {
+      this.broadcastPluginEvent('track.changed', {
+        deckId: payload.deckId as 'deck_a' | 'deck_b',
+        title: payload.track?.title || 'Unknown Title',
+        artist: payload.track?.artist || 'Unknown Artist',
+        album: payload.track?.album,
+        durationMs: payload.track?.durationMs || 0,
+      });
+    });
+
+    // 2. Broadcast connected -> broadcast.connected
+    const unsubBcastOn = eventBus.on('broadcast:connected', (payload: any) => {
+      this.broadcastPluginEvent('broadcast.connected', {
+        serverUrl: payload.server,
+        format: 'MP3',
+        bitrateKbps: payload.bitrate || 128,
+        sampleRate: 48000,
+      });
+    });
+
+    // 3. Broadcast disconnected -> broadcast.disconnected
+    const unsubBcastOff = eventBus.on('broadcast:disconnected', (payload: any) => {
+      this.broadcastPluginEvent('broadcast.disconnected', {
+        totalDurationSeconds: payload.durationSeconds || 0,
+      });
+    });
+
+    // 4. Recording started -> recording.started
+    const unsubRecOn = eventBus.on('recording:started', (payload: any) => {
+      this.broadcastPluginEvent('recording.started', {
+        sessionTitle: payload.id,
+        format: 'WAV',
+        sampleRate: 48000,
+      });
+    });
+
+    // 5. Recording stopped -> recording.stopped
+    const unsubRecOff = eventBus.on('recording:stopped', (payload: any) => {
+      this.broadcastPluginEvent('recording.stopped', {
+        sessionId: payload.id,
+        durationSeconds: payload.durationSeconds || 0,
+        filePath: payload.filePath,
+        fileSizeBytes: 0,
+      });
+    });
+
+    // 6. Schedule slot triggered -> schedule.triggered
+    const unsubSched = eventBus.on('schedule:event_started', (payload: any) => {
+      this.broadcastPluginEvent('schedule.triggered', {
+        slotId: payload.event?.id || 'slot',
+        title: payload.event?.title || 'Scheduled Event',
+        scheduledTime: payload.event?.startTime || new Date().toISOString(),
+        action: payload.event?.action || 'PLAY_SHOW',
+      });
+    });
+
+    this.busUnsubscribers = [
+      unsubTrack,
+      unsubBcastOn,
+      unsubBcastOff,
+      unsubRecOn,
+      unsubRecOff,
+      unsubSched,
     ];
-
-    for (const p of builtIns) {
-      this.plugins.set(p.manifest.id, p);
-      if (p.enabled) {
-        this.startPlugin(p.manifest.id);
-      }
-    }
   }
 
-  public getPlugins(): PluginInstance[] {
-    return Array.from(this.plugins.values());
-  }
+  private pluginEventListeners: Map<PluginEventName, Set<(payload: any) => void>> = new Map();
 
-  public getPlugin(id: string): PluginInstance | undefined {
-    return this.plugins.get(id);
-  }
-
-  public async enablePlugin(id: string): Promise<boolean> {
-    const plugin = this.plugins.get(id);
-    if (!plugin) return false;
-
-    plugin.enabled = true;
-    plugin.errorMessage = undefined;
-    const success = await this.startPlugin(id);
-    this.notify();
-    return success;
-  }
-
-  public async disablePlugin(id: string): Promise<boolean> {
-    const plugin = this.plugins.get(id);
-    if (!plugin) return false;
-
-    plugin.enabled = false;
-    await this.stopPlugin(id);
-    this.notify();
-    return true;
-  }
-
-  private async startPlugin(id: string): Promise<boolean> {
-    const plugin = this.plugins.get(id);
-    if (!plugin) return false;
-
-    plugin.status = 'STARTING';
-    this.notify();
-
-    try {
-      // In-process prototype handler execution
-      if (id === 'plugin-auto-ducking') {
-        this.runAutoDuckingHandler(plugin);
-      } else if (id === 'plugin-now-playing-poller') {
-        this.runMetadataPollerHandler(plugin);
-      } else if (id === 'plugin-voice-leveler') {
-        plugin.status = 'RUNNING';
-      } else {
-        plugin.status = 'RUNNING';
-      }
-
-      logger.info('PluginHost', `Plugin successfully started: ${plugin.manifest.name}`);
-      this.notify();
-      return true;
-    } catch (err: any) {
-      plugin.status = 'ERROR';
-      plugin.errorMessage = err?.message || 'Failed to start plugin in in-process prototype';
-      logger.error('PluginHost', `Plugin failure in in-process prototype for ${plugin.manifest.name}: ${plugin.errorMessage}`);
-      this.notify();
-      return false;
-    }
-  }
-
-  private async stopPlugin(id: string): Promise<boolean> {
-    const plugin = this.plugins.get(id);
-    if (!plugin) return false;
-
-    const interval = this.intervals.get(id);
-    if (interval) {
-      clearInterval(interval);
-      this.intervals.delete(id);
-    }
-
-    plugin.status = 'STOPPED';
-    logger.info('PluginHost', `Plugin stopped: ${plugin.manifest.name}`);
-    this.notify();
-    return true;
-  }
-
-  // Diagnostic test hook for error handling path
-  public simulateCrash(id: string) {
-    const plugin = this.plugins.get(id);
-    if (!plugin) return;
-
-    const interval = this.intervals.get(id);
-    if (interval) {
-      clearInterval(interval);
-      this.intervals.delete(id);
-    }
-
-    plugin.status = 'CRASHED';
-    plugin.errorMessage = 'Diagnostic test: InProcessExecutionFault';
-    logger.error('PluginHost', `Diagnostic test event on '${plugin.manifest.name}'`);
-    this.notify();
-  }
-
-  private runAutoDuckingHandler(plugin: PluginInstance) {
-    plugin.status = 'RUNNING';
-
-    // Auto-ducking loop monitoring mic channel
-    const interval = window.setInterval(() => {
-      if (plugin.status !== 'RUNNING') return;
-
-      const mixer = audioEngine.getMixerState();
-      const micChannel = mixer.channels.find((c) => c.id === 'mic');
-      const musicChannel = mixer.channels.find((c) => c.id === 'music');
-
-      if (micChannel && musicChannel) {
-        // If voice peak is above -35 dBFS, duck music to 0.35, otherwise restore to 0.70
-        const isSpeaking = micChannel.peakDb > -35;
-        const targetFader = isSpeaking ? 0.35 : 0.7;
-
-        if (Math.abs(musicChannel.faderLevel - targetFader) > 0.05) {
-          audioEngine.setChannelFader('music', targetFader);
+  private broadcastPluginEvent<E extends PluginEventName>(event: E, payload: PluginEventMap[E]) {
+    const listeners = this.pluginEventListeners.get(event);
+    if (listeners) {
+      listeners.forEach((fn) => {
+        try {
+          fn(payload);
+        } catch (err) {
+          logger.error('PluginHost', `Error in plugin event listener for "${event}"`, { error: err });
         }
-      }
-    }, 200);
-
-    this.intervals.set(plugin.manifest.id, interval);
+      });
+    }
   }
 
-  private runMetadataPollerHandler(plugin: PluginInstance) {
-    plugin.status = 'RUNNING';
-
-    const sampleTracks = [
-      { title: 'Kajian Tauhid Bagian 1', artist: 'Ustadz Pembicara' },
-      { title: 'Tadabbur Al-Quran Juz 30', artist: 'Qari Pilihan' },
-      { title: 'Bincang Siang Nusantara', artist: 'Studio Broadcaster' },
-      { title: 'Muhasabah dan Doa Bersama', artist: 'Majelis Siaran' },
-    ];
-    let trackIdx = 0;
-
-    const interval = window.setInterval(() => {
-      if (plugin.status !== 'RUNNING') return;
-
-      // Only update metadata if broadcast is ON AIR
-      const bStatus = shoutcastService.getStatus();
-      if (bStatus.state === 'CONNECTED') {
-        const trk = sampleTracks[trackIdx % sampleTracks.length];
-        shoutcastService.setMetadata({
-          title: trk.title,
-          artist: trk.artist,
-          stationName: bStatus.config.stationName,
-        });
-        trackIdx++;
-      }
-    }, 45000); // every 45s
-
-    this.intervals.set(plugin.manifest.id, interval);
+  /**
+   * Registers a 1-second interval for background UTILITY plugins.
+   */
+  private startUtilityTicker() {
+    if (typeof window === 'undefined') return;
+    this.utilityTimerId = window.setInterval(() => {
+      this.instances.forEach((instance) => {
+        if (instance.enabled && instance.state === 'ENABLED' && instance.manifest.type === 'UTILITY') {
+          const utility = instance.plugin as any;
+          if (utility && typeof utility.tick === 'function') {
+            try {
+              const ctx = this.createPluginContext(instance.manifest);
+              utility.tick(ctx);
+              instance.lastExecutionMs = Date.now();
+            } catch (err: any) {
+              logger.error('PluginHost', `Utility plugin "${instance.manifest.id}" tick exception`, {
+                error: err,
+              });
+              instance.state = 'ERROR';
+              instance.errorMessage = err?.message || String(err);
+              this.notify();
+            }
+          }
+        }
+      });
+    }, 1000);
   }
 
-  public async registerPlugin(manifest: PluginManifest): Promise<PluginInstance> {
-    const existing = this.plugins.get(manifest.id);
+  /**
+   * Creates an isolated execution context for a plugin instance.
+   */
+  public createPluginContext(manifest: PluginManifest): PluginContext {
+    const pluginId = manifest.id;
+
+    // Scoped persistent state store
+    let storeMap = this.storage.get(pluginId);
+    if (!storeMap) {
+      storeMap = new Map();
+      this.storage.set(pluginId, storeMap);
+    }
+
+    const stateStore: PluginStateStore = {
+      get: <T = unknown>(key: string, defaultValue?: T): T | undefined => {
+        return (storeMap!.get(key) as T) ?? defaultValue;
+      },
+      set: <T = unknown>(key: string, value: T): void => {
+        storeMap!.set(key, value);
+      },
+      delete: (key: string): void => {
+        storeMap!.delete(key);
+      },
+      clear: (): void => {
+        storeMap!.clear();
+      },
+    };
+
+    // Scoped logger
+    const scopedLogger = {
+      debug: (msg: string, meta?: unknown) =>
+        logger.debug(`Plugin[${pluginId}]`, msg, meta as Record<string, unknown> | undefined),
+      info: (msg: string, meta?: unknown) =>
+        logger.info(`Plugin[${pluginId}]`, msg, meta as Record<string, unknown> | undefined),
+      warn: (msg: string, meta?: unknown) =>
+        logger.warn(`Plugin[${pluginId}]`, msg, meta as Record<string, unknown> | undefined),
+      error: (msg: string, meta?: unknown) =>
+        logger.error(`Plugin[${pluginId}]`, msg, meta as Record<string, unknown> | undefined),
+    };
+
+    // Scoped event bus
+    const scopedEvents = {
+      on: <E extends PluginEventName>(event: E, listener: (payload: PluginEventMap[E]) => void): (() => void) => {
+        if (!this.pluginEventListeners.has(event)) {
+          this.pluginEventListeners.set(event, new Set());
+        }
+        this.pluginEventListeners.get(event)!.add(listener);
+        return () => {
+          this.pluginEventListeners.get(event)?.delete(listener);
+        };
+      },
+      emit: <E extends PluginEventName>(event: E, payload: PluginEventMap[E]) => {
+        this.broadcastPluginEvent(event, payload);
+      },
+    };
+
+    // Scoped command executor (Permission-Gated)
+    const scopedCommands = {
+      execute: async <TResult = unknown>(command: string, params?: unknown): Promise<TResult> => {
+        const allowed = permissionManager.verifyCommand(pluginId, manifest.permissions, command);
+        if (!allowed) {
+          throw new Error(
+            `Permission Denied: Plugin "${pluginId}" is not authorized to execute command "${command}".`
+          );
+        }
+
+        // Map short command aliases to controlApi actions
+        let cmdToRun = command;
+        if (command === 'NEXT_TRACK') cmdToRun = 'control.action.next_track';
+        if (command === 'PLAY_DECK') cmdToRun = 'deck.play';
+        if (command === 'START_RECORDING') cmdToRun = 'recording.start';
+        if (command === 'STOP_RECORDING') cmdToRun = 'recording.stop';
+
+        const res = await controlApi.execute(cmdToRun as any, params, 'AUTOMATION');
+        if (!res.success) {
+          throw new Error(res.error || `Command "${command}" execution failed.`);
+        }
+        return res.data as TResult;
+      },
+    };
+
+    // Metrics readout (if audio.read permission is granted)
+    const getAudioMetrics = (): AudioMetricsReadout => {
+      const hasPermission = permissionManager.hasPermission(manifest.permissions, 'audio.read');
+      if (!hasPermission) {
+        throw new Error(`Permission Denied: Plugin "${pluginId}" requires "audio.read" to access audio metrics.`);
+      }
+      const mixerState = audioEngine.getMixerState();
+      const peak = mixerState.masterPeakDb || -90;
+      const rms = mixerState.masterRmsDb || -90;
+      return {
+        peakDb: peak,
+        rmsDb: rms,
+        isClipping: peak >= 0,
+      };
+    };
+
+    return {
+      manifest,
+      logger: scopedLogger,
+      events: scopedEvents,
+      commands: scopedCommands,
+      state: stateStore,
+      getAudioMetrics,
+    };
+  }
+
+  /**
+   * Registers a new or sideloaded plugin into the host.
+   */
+  public async registerPlugin(
+    manifestCandidate: unknown,
+    pluginImpl?: Plugin
+  ): Promise<{ success: boolean; instance?: PluginInstance; error?: string }> {
+    const valResult = validateManifest(manifestCandidate);
+    if (!valResult.valid || !valResult.manifest) {
+      return {
+        success: false,
+        error: `Manifest Validation Failed: ${valResult.errors.join('; ')}`,
+      };
+    }
+
+    const manifest = valResult.manifest;
+    const existing = this.instances.get(manifest.id);
     if (existing) {
-      existing.manifest = manifest;
-      this.notify();
-      return existing;
+      logger.info('PluginHost', `Overwriting existing plugin registration: ${manifest.id}`);
+      await this.disablePlugin(manifest.id);
     }
 
     const instance: PluginInstance = {
       manifest,
-      status: 'STOPPED',
+      state: 'READY',
+      compatibility: valResult.compatibility,
       enabled: false,
+      plugin: pluginImpl,
+      installedAt: Date.now(),
+      validationWarnings: valResult.warnings,
       runtimeMode: 'in_process_prototype',
     };
-    this.plugins.set(manifest.id, instance);
+
+    this.instances.set(manifest.id, instance);
+    this.broadcastPluginEvent('plugin.installed', {
+      pluginId: manifest.id,
+      timestamp: Date.now(),
+      state: 'READY',
+    });
     this.notify();
-    logger.info('PluginHost', `Registered plugin: ${manifest.name} (${manifest.id})`);
-    return instance;
+
+    return { success: true, instance };
   }
 
-  public async unregisterPlugin(id: string): Promise<boolean> {
-    if (!this.plugins.has(id)) return false;
-    await this.disablePlugin(id);
-    this.plugins.delete(id);
+  public async unregisterPlugin(pluginId: string): Promise<boolean> {
+    const instance = this.instances.get(pluginId);
+    if (!instance) return false;
+
+    if (instance.enabled) {
+      await this.disablePlugin(pluginId);
+    }
+
+    if (instance.plugin && typeof instance.plugin.dispose === 'function') {
+      try {
+        await instance.plugin.dispose();
+      } catch (e) {
+        logger.warn('PluginHost', `Plugin dispose error: ${pluginId}`, { error: e });
+      }
+    }
+
+    instance.state = 'UNINSTALLED';
+    this.instances.delete(pluginId);
+    this.storage.delete(pluginId);
     this.notify();
-    logger.info('PluginHost', `Unregistered plugin: ${id}`);
     return true;
+  }
+
+  public async enablePlugin(pluginId: string): Promise<boolean> {
+    const instance = this.instances.get(pluginId);
+    if (!instance) return false;
+
+    try {
+      instance.state = 'VALIDATING';
+      this.notify();
+
+      const context = this.createPluginContext(instance.manifest);
+
+      if (instance.plugin) {
+        if (typeof instance.plugin.initialize === 'function') {
+          await instance.plugin.initialize(context);
+        }
+        if (typeof instance.plugin.start === 'function') {
+          await instance.plugin.start();
+        }
+      }
+
+      instance.enabled = true;
+      instance.state = 'ENABLED';
+      instance.errorMessage = undefined;
+      instance.lastExecutionMs = Date.now();
+
+      this.broadcastPluginEvent('plugin.enabled', {
+        pluginId,
+        timestamp: Date.now(),
+        state: 'ENABLED',
+      });
+      this.notify();
+      logger.info('PluginHost', `Plugin enabled: ${instance.manifest.name} (${pluginId})`);
+      return true;
+    } catch (err: any) {
+      instance.state = 'ERROR';
+      instance.errorMessage = err?.message || String(err);
+      this.broadcastPluginEvent('plugin.error', {
+        pluginId,
+        timestamp: Date.now(),
+        state: 'ERROR',
+        details: instance.errorMessage,
+      });
+      this.notify();
+      logger.error('PluginHost', `Failed enabling plugin "${pluginId}"`, { error: err });
+      return false;
+    }
+  }
+
+  public async disablePlugin(pluginId: string): Promise<boolean> {
+    const instance = this.instances.get(pluginId);
+    if (!instance) return false;
+
+    try {
+      if (instance.plugin && typeof instance.plugin.stop === 'function') {
+        await instance.plugin.stop();
+      }
+
+      instance.enabled = false;
+      instance.state = 'DISABLED';
+      this.broadcastPluginEvent('plugin.disabled', {
+        pluginId,
+        timestamp: Date.now(),
+        state: 'DISABLED',
+      });
+      this.notify();
+      logger.info('PluginHost', `Plugin disabled: ${instance.manifest.name} (${pluginId})`);
+      return true;
+    } catch (err: any) {
+      instance.state = 'ERROR';
+      instance.errorMessage = err?.message || String(err);
+      this.notify();
+      logger.error('PluginHost', `Failed disabling plugin "${pluginId}"`, { error: err });
+      return false;
+    }
+  }
+
+  public getPlugins(): PluginInstance[] {
+    return Array.from(this.instances.values());
+  }
+
+  public getPlugin(id: string): PluginInstance | undefined {
+    return this.instances.get(id);
   }
 
   public subscribe(listener: (plugins: PluginInstance[]) => void): () => void {
     this.listeners.add(listener);
-    return () => this.listeners.delete(listener);
+    listener(this.getPlugins());
+    return () => {
+      this.listeners.delete(listener);
+    };
   }
 
   private notify() {
     const list = this.getPlugins();
-    this.listeners.forEach((listener) => {
+    this.listeners.forEach((l) => {
       try {
-        listener(list);
+        l(list);
       } catch (err) {
-        logger.error('PluginHost', 'Error in plugin host listener', { error: err });
+        logger.error('PluginHost', 'Error in plugin listener callback', { error: err });
       }
     });
+  }
+
+  public dispose() {
+    if (this.utilityTimerId !== null) {
+      clearInterval(this.utilityTimerId);
+      this.utilityTimerId = null;
+    }
+    this.busUnsubscribers.forEach((unsub) => unsub());
+    this.busUnsubscribers = [];
   }
 }
 
