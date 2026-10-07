@@ -1,10 +1,12 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import { shoutcastService } from '../services/shoutcastService';
 import { playbackService } from '../services/playbackService';
+import { recorderService, RecorderState } from '../services/recorderService';
+import { stationProfileManager } from '../services/profile/stationProfileManager';
 import { BroadcastStatus } from '../types/broadcast';
 import { StreamMetrics } from '../types/telemetry';
 import { TranscriptSegment, TranscriptStatus } from '../types/transcript';
-import { BroadcastPreflightError, FullPlaybackSnapshot } from '../types/ipc';
+import { BroadcastPreflightError, FullPlaybackSnapshot, PlaylistItem } from '../types/ipc';
 
 interface OnAirWorkspaceProps {
   status: BroadcastStatus;
@@ -58,27 +60,47 @@ export const OnAirWorkspace: React.FC<OnAirWorkspaceProps> = ({
   const recentSegments = useMemo(() => transcriptSegments.slice(-5), [transcriptSegments]);
 
   const [playbackSnap, setPlaybackSnap] = useState<FullPlaybackSnapshot>(playbackService.getSnapshot());
+  const [queueItems, setQueueItems] = useState<PlaylistItem[]>([]);
+  const [recorderState, setRecorderState] = useState<RecorderState>(recorderService.getState());
+  const [recordDuration, setRecordDuration] = useState<number>(recorderService.getCurrentDuration());
   const [preflightErrors, setPreflightErrors] = useState<BroadcastPreflightError[]>([]);
   const [showPreflightModal, setShowPreflightModal] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   useEffect(() => {
-    const unsub = playbackService.onSnapshot((snap) => {
+    let mounted = true;
+    const loadQueue = async () => {
+      try {
+        const items = await playbackService.getPlaylist();
+        if (mounted) setQueueItems(items);
+      } catch {
+        // Ignored
+      }
+    };
+
+    loadQueue();
+
+    const unsubSnap = playbackService.onSnapshot((snap) => {
       setPlaybackSnap(snap);
+      loadQueue();
     });
-    return unsub;
+
+    const unsubRec = recorderService.onStateChange((st, dur) => {
+      setRecorderState(st);
+      setRecordDuration(dur);
+    });
+
+    return () => {
+      mounted = false;
+      unsubSnap();
+      unsubRec();
+    };
   }, []);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 3000);
   };
-
-  const waveformPattern = [
-    0.25, 0.42, 0.68, 0.86, 0.55, 0.38, 0.22, 0.48, 0.72, 0.92, 0.63, 0.34,
-    0.19, 0.46, 0.79, 0.58, 0.31, 0.23, 0.53, 0.76, 0.9, 0.64, 0.36, 0.2,
-    0.32, 0.57, 0.82, 0.71, 0.44, 0.26, 0.41, 0.67, 0.88, 0.58, 0.33, 0.18,
-  ];
 
   const deckA = playbackSnap.deckA;
   const deckB = playbackSnap.deckB;
@@ -95,23 +117,46 @@ export const OnAirWorkspace: React.FC<OnAirWorkspaceProps> = ({
   const deckBPercent = deckB.track ? Math.min(100, (deckBPos / deckBDur) * 100) : 0;
   const deckBRem = Math.max(0, deckBDur - deckBPos);
 
-  const nowPlaying = playbackSnap.nowPlaying;
-  const nowPlayingTitle =
-    nowPlaying?.track?.title || playbackSnap.currentTrack?.title || shoutcastService.getCurrentMetadata().title;
-  const nowPlayingArtist =
-    nowPlaying?.track?.artist || playbackSnap.currentTrack?.artist || shoutcastService.getCurrentMetadata().artist;
-  const nowPlayingDeck = nowPlaying?.deckId ? (nowPlaying.deckId === 'deck_a' ? 'Deck A' : 'Deck B') : (playbackSnap.activeDeck === 'deck_a' ? 'Deck A' : 'Deck B');
+  const activeTrack = isDeckAPlaying ? deckA.track : isDeckBPlaying ? deckB.track : (deckA.track || deckB.track);
+  const nowPlayingTitle = isDeckAPlaying || isDeckBPlaying
+    ? (activeTrack?.title || 'Playing Audio')
+    : (deckA.track || deckB.track
+      ? `Cued: ${activeTrack?.title}`
+      : 'Station Idle — Ready for playback');
+  const nowPlayingArtist = activeTrack
+    ? `${activeTrack.artist || 'Unknown Artist'}${activeTrack.album ? ` • ${activeTrack.album}` : ''}`
+    : 'No active media playing on program bus';
+  const nowPlayingDeck = isDeckAPlaying
+    ? 'Deck A'
+    : isDeckBPlaying
+    ? 'Deck B'
+    : deckA.track
+    ? 'Deck A (Cued)'
+    : deckB.track
+    ? 'Deck B (Cued)'
+    : 'None';
+
+  const nextQueueTrack = queueItems.length > 0 ? queueItems[0] : null;
+  const activeProfile = stationProfileManager.getActiveProfile();
 
   const handleStartBroadcastClick = async () => {
-    // Run broadcast preflight validation first
     const errors = await shoutcastService.validatePreflight(status.config);
     if (errors && errors.length > 0) {
       setPreflightErrors(errors);
       setShowPreflightModal(true);
       return;
     }
-    // Validation passed -> proceed to start broadcast
     onStartBroadcast();
+  };
+
+  const handleToggleRecord = async () => {
+    if (recorderState === 'RECORDING') {
+      const session = await recorderService.stopRecording();
+      showToast(session ? `Saved master tape: ${session.title}` : 'Master recording stopped');
+    } else {
+      const ok = await recorderService.startRecording();
+      showToast(ok ? 'Master audio capture active' : 'Failed to start recording. Verify audio engine.');
+    }
   };
 
   const handleToggleDeckA = async () => {
@@ -138,29 +183,44 @@ export const OnAirWorkspace: React.FC<OnAirWorkspaceProps> = ({
   const handleTransition = async (targetDeckId: 'deck_a' | 'deck_b', mode: 'hard_cut' | 'linear_crossfade') => {
     const ok = await playbackService.triggerTransition(targetDeckId, mode, 2500);
     if (ok) {
-      showToast(`${mode === 'hard_cut' ? 'Hard Cut' : 'Crossfade'} transition to ${targetDeckId === 'deck_a' ? 'Deck A' : 'Deck B'} triggered`);
+      showToast(`${mode === 'hard_cut' ? 'Hard Cut' : 'Crossfade'} to ${targetDeckId === 'deck_a' ? 'Deck A' : 'Deck B'} triggered`);
     }
   };
 
   const handleToggleMonitorSource = async () => {
     const nextSource = playbackSnap.monitorSource === 'master' ? 'cue' : 'master';
     await playbackService.setMonitorSource(nextSource as any);
-    showToast(`Physical monitor output routed to: ${nextSource.toUpperCase()}`);
+    showToast(`Physical monitor routed to: ${nextSource.toUpperCase()}`);
   };
 
   return (
     <section className="ws-workspace ws-workspace--air">
+      {/* Top Station & Operation Cockpit */}
       <div className="ws-command-row">
         <div>
-          <div className="ws-kicker">On Air / Master Console</div>
-          <h1 className="ws-title">{status.config.stationName}</h1>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span className="ws-kicker">On Air / Master Console</span>
+            {activeProfile?.callsign && (
+              <span className="ws-tag" style={{ color: 'var(--ws-live)', borderColor: 'var(--ws-live)' }}>
+                {activeProfile.callsign}
+              </span>
+            )}
+          </div>
+          <h1 className="ws-title" style={{ margin: '2px 0 4px 0' }}>
+            {activeProfile?.name || status.config.stationName}
+          </h1>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
             <span
               className="ws-badge"
               data-variant={isLive ? 'live' : status.state === 'ERROR' ? 'danger' : 'neutral'}
             >
               {isLive ? '● ON AIR' : status.state}
             </span>
+            {recorderState === 'RECORDING' && (
+              <span className="ws-badge" data-variant="danger" style={{ animation: 'ws-pulse 1.5s infinite' }}>
+                ● REC {formatDuration(recordDuration)}
+              </span>
+            )}
             <span style={{ fontSize: '11px', color: 'var(--ws-muted)' }}>
               Now Playing ({nowPlayingDeck}): <strong style={{ color: 'var(--ws-text)' }}>{nowPlayingTitle}</strong> — {nowPlayingArtist}
             </span>
@@ -180,6 +240,21 @@ export const OnAirWorkspace: React.FC<OnAirWorkspaceProps> = ({
             }}
           >
             Monitor: {playbackSnap.monitorSource.toUpperCase()}
+          </button>
+
+          {/* Master Output Capture */}
+          <button
+            type="button"
+            className="ws-secondary-action"
+            onClick={handleToggleRecord}
+            title={recorderState === 'RECORDING' ? 'Stop recording master audio to disk' : 'Record master output to local WAV archive'}
+            style={{
+              borderColor: recorderState === 'RECORDING' ? 'var(--ws-danger)' : undefined,
+              color: recorderState === 'RECORDING' ? 'var(--ws-danger)' : undefined,
+              background: recorderState === 'RECORDING' ? 'rgba(255, 95, 112, 0.12)' : undefined,
+            }}
+          >
+            {recorderState === 'RECORDING' ? `Stop REC (${formatDuration(recordDuration)})` : '● Record Master'}
           </button>
 
           {status.state === 'ERROR' && (
@@ -564,56 +639,171 @@ export const OnAirWorkspace: React.FC<OnAirWorkspaceProps> = ({
         </div>
       </div>
 
-      {/* Signal Board */}
-      <section className="ws-signal-board" aria-label="Master signal visualization">
-        <div className="ws-signal-header">
-          <div className="ws-signal-title">
-            <span>Master signal</span>
-            <span className="ws-kicker">
-              {isLive ? 'broadcasting' : (hasAudio ? 'monitoring signal' : 'idle')}
-            </span>
+      {/* Middle Operational Split: Master VU Meter & Upcoming Program Queue */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.35fr) minmax(320px, 1fr)', gap: '12px' }}>
+        {/* Master Program Signal Console */}
+        <section
+          style={{
+            border: '1px solid var(--ws-line)',
+            borderRadius: '7px',
+            background: 'var(--ws-panel)',
+            padding: '12px 14px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '8px',
+          }}
+          aria-label="Master program signal console"
+        >
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span className="ws-strip-source" style={{ color: 'var(--ws-live)' }}>MASTER PROGRAM BUS</span>
+              <span
+                className="ws-badge"
+                data-variant={masterPeakDb >= -0.5 ? 'danger' : isLive ? 'live' : hasAudio ? 'ready' : 'neutral'}
+              >
+                {masterPeakDb >= -0.5 ? 'OVERLOAD' : isLive ? 'ON AIR' : hasAudio ? 'SIGNAL PRESENT' : 'IDLE'}
+              </span>
+            </div>
+            <div style={{ fontSize: '10px', fontFamily: 'var(--font-mono)', color: 'var(--ws-muted)' }}>
+              {status.config.bitrate} kbps • {status.config.codec} • 48kHz Stereo
+            </div>
           </div>
-          <div className="ws-signal-caption">
-            {status.config.bitrate} kbps / {status.config.codec}
-          </div>
-        </div>
 
-        <div className="ws-signal-stage">
-          <div className="ws-signal-scale" aria-hidden="true">
-            <span>-60</span>
-            <span>-36</span>
-            <span>-18</span>
-            <span>-12</span>
-            <span>-6</span>
-            <span>-3</span>
-            <span>0 dBFS</span>
-          </div>
+          {/* Calibrated dBFS Stereo Meter Bars */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '5px', padding: '4px 0' }}>
+            {/* Scale markings */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9px', fontFamily: 'var(--font-mono)', color: 'var(--ws-subtle)', padding: '0 2px' }}>
+              <span>-60</span>
+              <span>-36</span>
+              <span>-24</span>
+              <span>-18</span>
+              <span>-12</span>
+              <span>-6</span>
+              <span>-3</span>
+              <span style={{ color: 'var(--ws-danger)' }}>0 dBFS</span>
+            </div>
 
-          <div className="ws-wave" data-live={isLive} aria-label={`Master RMS ${masterRmsDb.toFixed(1)} dBFS`}>
-            {waveformPattern.map((shape, index) => {
-              const barHeight = hasAudio ? Math.max(3, level * shape * 100) : 2;
-              return (
-                <span
-                  key={index}
-                  className="ws-wave-bar"
+            {/* Left Channel */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span style={{ fontSize: '9px', fontFamily: 'var(--font-mono)', color: 'var(--ws-muted)', width: '12px' }}>L</span>
+              <div style={{ flex: 1, height: '8px', background: 'var(--ws-panel-3)', borderRadius: '2px', overflow: 'hidden', position: 'relative' }}>
+                <div
                   style={{
-                    height: `${barHeight}%`,
-                    opacity: hasAudio ? (isLive ? 0.9 : 0.55) : 0.22,
+                    height: '100%',
+                    width: `${Math.max(2, level * 100)}%`,
+                    background: peak > 0.95 ? 'var(--ws-danger)' : peak > 0.8 ? 'var(--ws-warning)' : 'var(--ws-live)',
+                    transition: 'width 80ms linear',
                   }}
                 />
-              );
-            })}
+              </div>
+            </div>
+
+            {/* Right Channel */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span style={{ fontSize: '9px', fontFamily: 'var(--font-mono)', color: 'var(--ws-muted)', width: '12px' }}>R</span>
+              <div style={{ flex: 1, height: '8px', background: 'var(--ws-panel-3)', borderRadius: '2px', overflow: 'hidden', position: 'relative' }}>
+                <div
+                  style={{
+                    height: '100%',
+                    width: `${Math.max(2, Math.max(0, level - 0.02) * 100)}%`,
+                    background: peak > 0.95 ? 'var(--ws-danger)' : peak > 0.8 ? 'var(--ws-warning)' : 'var(--ws-live)',
+                    transition: 'width 80ms linear',
+                  }}
+                />
+              </div>
+            </div>
           </div>
 
-          <div className="ws-playhead" data-live={isLive || hasAudio} aria-hidden="true" />
-
-          <div className="ws-signal-footer">
-            <span>RMS <strong>{masterRmsDb.toFixed(1)} dBFS</strong></span>
-            <span>PEAK <strong>{masterPeakDb.toFixed(1)} dBFS</strong></span>
-            <span>Headroom <strong>{Math.max(0, 0 - masterPeakDb).toFixed(1)} dB</strong></span>
+          {/* Telemetry readouts footer */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '10px', fontFamily: 'var(--font-mono)', color: 'var(--ws-muted)', borderTop: '1px solid var(--ws-line)', paddingTop: '6px' }}>
+            <span>RMS: <strong style={{ color: 'var(--ws-text)' }}>{masterRmsDb.toFixed(1)} dBFS</strong></span>
+            <span>PEAK: <strong style={{ color: peak > 0.95 ? 'var(--ws-danger)' : 'var(--ws-text)' }}>{masterPeakDb.toFixed(1)} dBFS</strong></span>
+            <span>HEADROOM: <strong style={{ color: 'var(--ws-text)' }}>{Math.max(0, 0 - masterPeakDb).toFixed(1)} dB</strong></span>
           </div>
-        </div>
-      </section>
+        </section>
+
+        {/* Next in Queue Console */}
+        <section
+          style={{
+            border: '1px solid var(--ws-line)',
+            borderRadius: '7px',
+            background: 'var(--ws-panel)',
+            padding: '12px 14px',
+            display: 'flex',
+            flexDirection: 'column',
+            justifyContent: 'space-between',
+            gap: '8px',
+          }}
+          aria-label="Upcoming broadcast program queue"
+        >
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <span className="ws-strip-source">NEXT IN QUEUE</span>
+              <span className="ws-tag">{queueItems.length} QUEUED</span>
+            </div>
+            <span style={{ fontSize: '10px', color: 'var(--ws-muted)' }}>
+              Auto-Advance: <strong style={{ color: playbackSnap.autoAdvance ? 'var(--ws-live)' : 'var(--ws-muted)' }}>{playbackSnap.autoAdvance ? 'ACTIVE' : 'OFF'}</strong>
+            </span>
+          </div>
+
+          {nextQueueTrack ? (
+            <div style={{ background: 'var(--ws-panel-2)', padding: '8px 10px', borderRadius: '5px', border: '1px solid var(--ws-line)' }}>
+              <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--ws-text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {nextQueueTrack.title}
+              </div>
+              <div style={{ fontSize: '11px', color: 'var(--ws-muted)', marginTop: '2px', display: 'flex', justifyContent: 'space-between' }}>
+                <span>{nextQueueTrack.artist || 'Unknown Artist'}</span>
+                <span style={{ fontFamily: 'var(--font-mono)' }}>{formatDuration(Math.round(nextQueueTrack.durationMs / 1000))}</span>
+              </div>
+            </div>
+          ) : (
+            <div style={{ padding: '8px 10px', borderRadius: '5px', background: 'var(--ws-panel-2)', border: '1px dashed var(--ws-line)', fontSize: '11px', color: 'var(--ws-muted)' }}>
+              End of queue reached. Add tracks from the Playlist tab to line up next music.
+            </div>
+          )}
+
+          <div style={{ display: 'flex', gap: '6px', justifyContent: 'flex-end', borderTop: '1px solid var(--ws-line)', paddingTop: '6px' }}>
+            {nextQueueTrack && (
+              <>
+                <button
+                  type="button"
+                  className="ws-mini-action"
+                  onClick={async () => {
+                    await playbackService.loadDeck('deck_a', nextQueueTrack.filePath);
+                    showToast(`Preloaded "${nextQueueTrack.title}" into Deck A`);
+                  }}
+                  title="Load this upcoming track directly into Deck A"
+                >
+                  Load Deck A
+                </button>
+                <button
+                  type="button"
+                  className="ws-mini-action"
+                  onClick={async () => {
+                    await playbackService.loadDeck('deck_b', nextQueueTrack.filePath);
+                    showToast(`Preloaded "${nextQueueTrack.title}" into Deck B`);
+                  }}
+                  title="Load this upcoming track directly into Deck B"
+                >
+                  Load Deck B
+                </button>
+              </>
+            )}
+            <button
+              type="button"
+              className="ws-mini-action"
+              onClick={async () => {
+                const res = await playbackService.triggerControlAction('next_track');
+                if (res) showToast('Advanced queue to next track');
+              }}
+              disabled={!nextQueueTrack}
+              title="Immediately advance and play next queued track"
+            >
+              Play Next Now →
+            </button>
+          </div>
+        </section>
+      </div>
 
       {/* Bottom Telemetry & Status Grids */}
       <div className="ws-bottom-grid">

@@ -122,6 +122,12 @@ export const ScheduleWorkspace: React.FC = () => {
     showToast(`Removed program: ${name}`);
   };
 
+  const handleToggleEnable = (ev: ScheduleEvent) => {
+    const nextVal = !ev.enabled;
+    schedulerService.updateEvent(ev.id, { enabled: nextVal });
+    showToast(`Program "${ev.title}" ${nextVal ? 'ENABLED' : 'DISABLED'}`);
+  };
+
   const handleTriggerManual = async (ev: ScheduleEvent) => {
     await schedulerService.triggerEventManual(ev.id);
     showToast(`Manually activated program: "${ev.title}"`);
@@ -395,9 +401,16 @@ export const ScheduleWorkspace: React.FC = () => {
                       </div>
                     </div>
 
-                    {/* Category */}
-                    <div>
-                      <span className="ws-badge" data-variant="neutral">
+                    {/* Status & Category */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                      <span
+                        className="ws-badge"
+                        data-variant={isCurrent ? 'live' : ev.enabled ? 'neutral' : 'warning'}
+                        style={{ fontSize: '9px', padding: '1px 5px', width: 'fit-content' }}
+                      >
+                        {isCurrent ? 'ACTIVE' : ev.enabled ? 'ENABLED' : 'DISABLED'}
+                      </span>
+                      <span style={{ fontSize: '10px', color: 'var(--ws-muted)' }}>
                         {ev.category.replace('_', ' ')}
                       </span>
                     </div>
@@ -415,7 +428,7 @@ export const ScheduleWorkspace: React.FC = () => {
                     </div>
 
                     {/* Actions */}
-                    <div style={{ textAlign: 'right', display: 'flex', gap: '4px', justifyContent: 'flex-end' }}>
+                    <div style={{ textAlign: 'right', display: 'flex', gap: '4px', justifyContent: 'flex-end', alignItems: 'center' }}>
                       <button
                         type="button"
                         className="ws-mini-action"
@@ -428,7 +441,17 @@ export const ScheduleWorkspace: React.FC = () => {
                       <button
                         type="button"
                         className="ws-mini-action"
+                        style={{ color: ev.enabled ? 'var(--ws-muted)' : 'var(--ws-warning)' }}
+                        onClick={() => handleToggleEnable(ev)}
+                        title={ev.enabled ? 'Disable this scheduled program' : 'Enable this scheduled program'}
+                      >
+                        {ev.enabled ? 'Disable' : 'Enable'}
+                      </button>
+                      <button
+                        type="button"
+                        className="ws-mini-action"
                         onClick={() => handleOpenEditModal(ev)}
+                        title="Edit program parameters"
                       >
                         Edit
                       </button>
@@ -437,6 +460,7 @@ export const ScheduleWorkspace: React.FC = () => {
                         className="ws-mini-action"
                         style={{ color: 'var(--ws-danger)' }}
                         onClick={() => handleDeleteEvent(ev.id, ev.title)}
+                        title="Delete program"
                       >
                         ✕
                       </button>

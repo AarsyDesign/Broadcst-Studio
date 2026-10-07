@@ -5,23 +5,20 @@ import { stationProfileManager } from '../services/profile/stationProfileManager
 import { StationProfile } from '../services/profile/types';
 import { AudioCodecType, CODEC_PROFILES } from '../types/codecs';
 import { ShoutcastConfig, TrackMetadata } from '../types/broadcast';
-import { transcriptionService } from '../services/transcription/transcriptionService';
 import { controlApi } from '../services/controlApi';
 import { recoveryManager, SystemHealthStatus } from '../services/recovery/recoveryManager';
 import { historyService } from '../services/history/historyService';
 import { OperationAuditLogItem } from '../services/history/types';
+import { recorderService } from '../services/recorderService';
 
 type SettingsSection =
-  | 'station'
-  | 'shoutcast'
   | 'audio'
+  | 'broadcast'
+  | 'station'
   | 'recording'
-  | 'transcript'
-  | 'plugins'
-  | 'ai'
-  | 'appearance'
-  | 'audit'
-  | 'developer';
+  | 'devices'
+  | 'operator'
+  | 'system';
 
 interface SettingsWorkspaceProps {
   theme?: 'dark' | 'light';
@@ -32,7 +29,7 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
   theme = 'dark',
   onSetTheme,
 }) => {
-  const [activeSection, setActiveSection] = useState<SettingsSection>('station');
+  const [activeSection, setActiveSection] = useState<SettingsSection>('audio');
   const [profiles, setProfiles] = useState<StationProfile[]>(stationProfileManager.getProfiles());
   const [activeProfile, setActiveProfile] = useState<StationProfile>(stationProfileManager.getActiveProfile());
 
@@ -162,16 +159,13 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
   };
 
   const SECTIONS: { id: SettingsSection; label: string; kicker: string }[] = [
-    { id: 'station', label: 'Station Profile', kicker: 'Identity' },
-    { id: 'shoutcast', label: 'SHOUTcast & Icecast', kicker: 'Transmission' },
-    { id: 'audio', label: 'Audio Engine & Processing', kicker: 'Core Audio' },
-    { id: 'recording', label: 'Recording & Archives', kicker: 'Storage' },
-    { id: 'transcript', label: 'Speech Transcription', kicker: 'Editorial' },
-    { id: 'plugins', label: 'Plugin Environment', kicker: 'Extensibility' },
-    { id: 'ai', label: 'AI & Control API', kicker: 'Security' },
-    { id: 'appearance', label: 'Appearance & Motion', kicker: 'Interface' },
-    { id: 'audit', label: 'Operations & Audit Log', kicker: 'Traceability' },
-    { id: 'developer', label: 'Developer & System', kicker: 'Diagnostics' },
+    { id: 'audio', label: 'Audio Engine', kicker: 'AUDIO' },
+    { id: 'broadcast', label: 'Broadcast & Stream', kicker: 'BROADCAST' },
+    { id: 'station', label: 'Station Profile', kicker: 'STATION PROFILE' },
+    { id: 'recording', label: 'Recording & Archive', kicker: 'RECORDING' },
+    { id: 'devices', label: 'Hardware Devices', kicker: 'DEVICES' },
+    { id: 'operator', label: 'Operator & UI', kicker: 'OPERATOR' },
+    { id: 'system', label: 'System & Diagnostics', kicker: 'SYSTEM' },
   ];
 
   const handleExportProfiles = () => {
@@ -402,7 +396,7 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
           )}
 
           {/* 2. TRANSMISSION (SHOUTCAST & ICECAST) */}
-          {activeSection === 'shoutcast' && (
+          {activeSection === 'broadcast' && (
             <form onSubmit={handleSaveStation} style={{ maxWidth: '640px' }}>
               <h2 style={{ fontSize: '15px', fontWeight: 760, marginBottom: '16px' }}>Streaming Transmission Protocols</h2>
 
@@ -635,10 +629,59 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
                 </select>
               </div>
 
+            </div>
+          )}
+
+          {/* 4. RECORDING */}
+          {activeSection === 'recording' && (
+            <div style={{ maxWidth: '640px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                <h2 style={{ fontSize: '15px', fontWeight: 760, margin: 0 }}>Broadcast Recording &amp; Archive Parameters</h2>
+                <button
+                  type="button"
+                  className="ws-secondary-action"
+                  style={{ height: '28px', fontSize: '10px' }}
+                  onClick={() => recorderService.openRecordingFolder()}
+                  title="Open recording folder in Explorer"
+                >
+                  Open Archive Folder
+                </button>
+              </div>
+
+              <div className="ws-form-group">
+                <label className="ws-form-label">Archive Container &amp; Encoding</label>
+                <select className="ws-select" style={{ width: '100%' }} defaultValue="wav">
+                  <option value="wav">WAV Linear PCM 16-bit 48kHz (Lossless Studio Master)</option>
+                  <option value="opus">WebM / Opus 192 kbps (Standard Compressed Archive)</option>
+                </select>
+              </div>
+
+              <div className="ws-form-group">
+                <label className="ws-form-label">Auto-Record Policy</label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: 'var(--ws-text)' }}>
+                  <input type="checkbox" defaultChecked style={{ accentColor: 'var(--ws-live)' }} />
+                  Automatically start recording when broadcast state transitions to ON AIR
+                </label>
+              </div>
+            </div>
+          )}
+
+          {/* 5. DEVICES */}
+          {activeSection === 'devices' && (
+            <div style={{ maxWidth: '640px' }}>
+              <h2 style={{ fontSize: '15px', fontWeight: 760, marginBottom: '16px' }}>Hardware Audio Endpoints &amp; Driver Recovery</h2>
+
+              <div className="ws-banner" data-type="notice" style={{ marginBottom: '16px' }}>
+                <div>
+                  <strong style={{ display: 'block', color: 'var(--ws-text)' }}>Physical Endpoint Controller</strong>
+                  <span>Direct WASAPI / CPAL hardware routing layer. Connects physical microphones and physical monitor headphones with zero software bridging.</span>
+                </div>
+              </div>
+
               {/* Hardware Disaster Recovery Panel */}
-              <div style={{ borderTop: '1px solid var(--ws-line)', paddingTop: '16px', marginTop: '16px' }}>
+              <div style={{ border: '1px solid var(--ws-line)', background: 'var(--ws-panel)', padding: '16px', borderRadius: '7px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                  <h3 style={{ fontSize: '13px', fontWeight: 700, margin: 0 }}>Hardware Disaster Recovery</h3>
+                  <h3 style={{ fontSize: '13px', fontWeight: 700, margin: 0 }}>Audio Hardware Health &amp; Failover</h3>
                   <span className="ws-badge" data-variant={recoveryStatus === 'HEALTHY' ? 'live' : 'offline'}>
                     {recoveryStatus === 'HEALTHY' ? 'HEALTHY' : recoveryStatus === 'RECOVERING' ? 'RECOVERING...' : 'DEGRADED'}
                   </span>
@@ -675,122 +718,13 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
             </div>
           )}
 
-          {/* 4. RECORDING */}
-          {activeSection === 'recording' && (
+          {/* 6. OPERATOR */}
+          {activeSection === 'operator' && (
             <div style={{ maxWidth: '640px' }}>
-              <h2 style={{ fontSize: '15px', fontWeight: 760, marginBottom: '16px' }}>Broadcast Recording & Archive Parameters</h2>
+              <h2 style={{ fontSize: '15px', fontWeight: 760, marginBottom: '16px' }}>Operator Preferences &amp; Interface</h2>
 
               <div className="ws-form-group">
-                <label className="ws-form-label">Archive Container & Encoding</label>
-                <select className="ws-select" style={{ width: '100%' }} defaultValue="opus">
-                  <option value="opus">WebM / Opus 192 kbps (Standard Compressed Archive)</option>
-                  <option value="wav">WAV Linear PCM 16-bit 48kHz (Lossless Studio Master)</option>
-                </select>
-              </div>
-
-              <div className="ws-form-group">
-                <label className="ws-form-label">Auto-Record Policy</label>
-                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: 'var(--ws-text)' }}>
-                  <input type="checkbox" defaultChecked style={{ accentColor: 'var(--ws-live)' }} />
-                  Automatically start recording when broadcast state transitions to ON AIR
-                </label>
-              </div>
-            </div>
-          )}
-
-          {/* 5. TRANSCRIPT */}
-          {activeSection === 'transcript' && (
-            <div style={{ maxWidth: '640px' }}>
-              <h2 style={{ fontSize: '15px', fontWeight: 760, marginBottom: '16px' }}>Speech Transcription Engine</h2>
-
-              <div className="ws-form-group">
-                <label className="ws-form-label">Transcription Provider Adapter</label>
-                <select
-                  className="ws-select"
-                  style={{ width: '100%' }}
-                  value={transcriptionService.getStatus().config.provider}
-                  onChange={(e) => transcriptionService.setProvider(e.target.value)}
-                >
-                  <option value="local_whisper">Local Whisper (In-Browser Emulated Model)</option>
-                  <option value="openai_whisper">OpenAI Whisper Cloud Adapter</option>
-                </select>
-              </div>
-
-              <div className="ws-form-group">
-                <label className="ws-form-label">Spoken Language Recognition</label>
-                <select
-                  className="ws-select"
-                  style={{ width: '100%' }}
-                  value={transcriptionService.getStatus().config.language}
-                  onChange={(e) => transcriptionService.updateConfig({ language: e.target.value })}
-                >
-                  <option value="id">Indonesian (Bahasa Indonesia)</option>
-                  <option value="en">English (US/UK)</option>
-                  <option value="ar">Arabic (العربية)</option>
-                </select>
-              </div>
-            </div>
-          )}
-
-          {/* 6. PLUGINS */}
-          {activeSection === 'plugins' && (
-            <div style={{ maxWidth: '640px' }}>
-              <h2 style={{ fontSize: '15px', fontWeight: 760, marginBottom: '16px' }}>Broadcst Plugin Execution Rules</h2>
-
-              <div className="ws-banner" data-type="notice" style={{ marginBottom: '16px' }}>
-                <div>
-                  <strong style={{ display: 'block', color: 'var(--ws-text)' }}>Current Runtime: In-Process Prototype</strong>
-                  <span>Plugin instances currently run in-process within the local application thread. Target architecture: isolated native plugin process.</span>
-                </div>
-              </div>
-
-              <div className="ws-form-group">
-                <label className="ws-form-label">Sideloading Permissions</label>
-                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: 'var(--ws-text)', marginBottom: '8px' }}>
-                  <input type="checkbox" defaultChecked style={{ accentColor: 'var(--ws-live)' }} />
-                  Allow metadata modification plugins
-                </label>
-                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: 'var(--ws-text)' }}>
-                  <input type="checkbox" defaultChecked style={{ accentColor: 'var(--ws-live)' }} />
-                  Allow outbound webhooks and telemetry push
-                </label>
-              </div>
-            </div>
-          )}
-
-          {/* 7. AI & CONTROL API */}
-          {activeSection === 'ai' && (
-            <div style={{ maxWidth: '640px' }}>
-              <h2 style={{ fontSize: '15px', fontWeight: 760, marginBottom: '16px' }}>AI Assistant & Control API Policies</h2>
-
-              <div className="ws-form-group">
-                <label className="ws-form-label">Control API Security Policy</label>
-                <div style={{ fontSize: '11px', color: 'var(--ws-muted)', marginBottom: '10px' }}>
-                  All actions taken by the AI Assistant or MCP external agents are dispatched through the same Control API used by human operators.
-                </div>
-                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: 'var(--ws-text)', marginBottom: '8px' }}>
-                  <input
-                    type="checkbox"
-                    checked={controlApi.getPolicy().allowAiCriticalCommands}
-                    onChange={(e) => {
-                      controlApi.setPolicy({ allowAiCriticalCommands: e.target.checked });
-                      showToast(`AI critical command policy: ${e.target.checked ? 'Allowed' : 'Blocked'}`);
-                    }}
-                    style={{ accentColor: 'var(--ws-live)' }}
-                  />
-                  Allow AI Assistant to execute critical actions (Start/Stop Broadcast) without human confirmation
-                </label>
-              </div>
-            </div>
-          )}
-
-          {/* 8. APPEARANCE & MOTION */}
-          {activeSection === 'appearance' && (
-            <div style={{ maxWidth: '640px' }}>
-              <h2 style={{ fontSize: '15px', fontWeight: 760, marginBottom: '16px' }}>Interface Theme & Motion System</h2>
-
-              <div className="ws-form-group">
-                <label className="ws-form-label">Color Theme</label>
+                <label className="ws-form-label">Studio Color Theme</label>
                 <div className="ws-tabs">
                   <button
                     type="button"
@@ -798,7 +732,7 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
                     data-active={theme === 'dark'}
                     onClick={() => onSetTheme?.('dark')}
                   >
-                    Studio Dark (Primary)
+                    Studio Dark (Standard)
                   </button>
                   <button
                     type="button"
@@ -806,7 +740,7 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
                     data-active={theme === 'light'}
                     onClick={() => onSetTheme?.('light')}
                   >
-                    Studio Light (WCAG AA Compliant)
+                    Studio Light (High Contrast)
                   </button>
                 </div>
               </div>
@@ -817,15 +751,46 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
                   Broadcst Studio uses Motion 3 (real-time data-driven meters and waveform animation). When system <code>prefers-reduced-motion</code> is active, all continuous animations are automatically disabled.
                 </div>
               </div>
+
+              {/* Operator Hotkeys Cheat Sheet */}
+              <div style={{ borderTop: '1px solid var(--ws-line)', paddingTop: '16px', marginTop: '16px' }}>
+                <h3 style={{ fontSize: '13px', fontWeight: 700, margin: '0 0 10px 0' }}>Operator Broadcast Hotkeys</h3>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px', fontSize: '11px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 8px', background: 'var(--ws-panel-2)', borderRadius: '4px' }}>
+                    <span style={{ color: 'var(--ws-muted)' }}>Play / Pause Focused Deck</span>
+                    <kbd style={{ fontFamily: 'var(--font-mono)', fontWeight: 700 }}>Space</kbd>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 8px', background: 'var(--ws-panel-2)', borderRadius: '4px' }}>
+                    <span style={{ color: 'var(--ws-muted)' }}>Focus Deck A</span>
+                    <kbd style={{ fontFamily: 'var(--font-mono)', fontWeight: 700 }}>1 / F1</kbd>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 8px', background: 'var(--ws-panel-2)', borderRadius: '4px' }}>
+                    <span style={{ color: 'var(--ws-muted)' }}>Focus Deck B</span>
+                    <kbd style={{ fontFamily: 'var(--font-mono)', fontWeight: 700 }}>2 / F2</kbd>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 8px', background: 'var(--ws-panel-2)', borderRadius: '4px' }}>
+                    <span style={{ color: 'var(--ws-muted)' }}>Quick Mute Mic</span>
+                    <kbd style={{ fontFamily: 'var(--font-mono)', fontWeight: 700 }}>M</kbd>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 8px', background: 'var(--ws-panel-2)', borderRadius: '4px' }}>
+                    <span style={{ color: 'var(--ws-muted)' }}>Toggle Cue Monitor</span>
+                    <kbd style={{ fontFamily: 'var(--font-mono)', fontWeight: 700 }}>C</kbd>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 8px', background: 'var(--ws-panel-2)', borderRadius: '4px' }}>
+                    <span style={{ color: 'var(--ws-muted)' }}>Trigger Session Record</span>
+                    <kbd style={{ fontFamily: 'var(--font-mono)', fontWeight: 700 }}>R</kbd>
+                  </div>
+                </div>
+              </div>
             </div>
           )}
 
-          {/* 9. OPERATIONS AUDIT LOG */}
-          {activeSection === 'audit' && (
+          {/* 7. SYSTEM */}
+          {activeSection === 'system' && (
             <div style={{ maxWidth: '800px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
                 <div>
-                  <h2 style={{ fontSize: '15px', fontWeight: 760, margin: 0 }}>Operations & Audit History</h2>
+                  <h2 style={{ fontSize: '15px', fontWeight: 760, margin: 0 }}>Operations &amp; Audit History</h2>
                   <div style={{ fontSize: '11px', color: 'var(--ws-muted)' }}>
                     Authoritative execution trace for operator macros, hotkeys, schedules, and automation triggers.
                   </div>
@@ -864,8 +829,9 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
                   border: '1px solid var(--ws-line)',
                   borderRadius: '6px',
                   background: 'var(--ws-panel-2)',
-                  maxHeight: '380px',
+                  maxHeight: '260px',
                   overflowY: 'auto',
+                  marginBottom: '16px',
                 }}
               >
                 {auditLogs.length === 0 ? (
@@ -918,24 +884,29 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
                   </table>
                 )}
               </div>
-            </div>
-          )}
 
-          {/* 9. DEVELOPER & SYSTEM */}
-          {activeSection === 'developer' && (
-            <div style={{ maxWidth: '640px' }}>
-              <h2 style={{ fontSize: '15px', fontWeight: 760, marginBottom: '16px' }}>Developer Diagnostics & Environment</h2>
-
-              <div className="ws-form-group">
-                <label className="ws-form-label">Log Verbosity Level</label>
-                <select className="ws-select" style={{ width: '100%' }} defaultValue="info">
-                  <option value="debug">DEBUG (Verbose IPC + VU Meter events)</option>
-                  <option value="info">INFO (Operational broadcast state changes)</option>
-                  <option value="warn">WARN (Errors and stream reconnects only)</option>
-                </select>
+              {/* Control API Security Policy */}
+              <div className="ws-form-group" style={{ borderTop: '1px solid var(--ws-line)', paddingTop: '16px' }}>
+                <label className="ws-form-label">Control API Security Policy</label>
+                <div style={{ fontSize: '11px', color: 'var(--ws-muted)', marginBottom: '8px' }}>
+                  All actions taken by the AI Assistant or MCP external agents are dispatched through the same Control API used by human operators.
+                </div>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: 'var(--ws-text)' }}>
+                  <input
+                    type="checkbox"
+                    checked={controlApi.getPolicy().allowAiCriticalCommands}
+                    onChange={(e) => {
+                      controlApi.setPolicy({ allowAiCriticalCommands: e.target.checked });
+                      showToast(`AI critical command policy: ${e.target.checked ? 'Allowed' : 'Blocked'}`);
+                    }}
+                    style={{ accentColor: 'var(--ws-live)' }}
+                  />
+                  Allow AI Assistant to execute critical actions (Start/Stop Broadcast) without human confirmation
+                </label>
               </div>
 
-              <div style={{ marginTop: '20px', borderTop: '1px solid var(--ws-line)', paddingTop: '16px' }}>
+              {/* Reset Station Storage */}
+              <div style={{ marginTop: '16px', borderTop: '1px solid var(--ws-line)', paddingTop: '16px' }}>
                 <h3 style={{ fontSize: '13px', fontWeight: 700, margin: '0 0 8px 0', color: 'var(--ws-danger)' }}>
                   Reset Station Storage
                 </h3>
@@ -953,7 +924,7 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
                     }
                   }}
                 >
-                  Reset Local Storage & Reload
+                  Reset Local Storage &amp; Reload
                 </button>
               </div>
             </div>

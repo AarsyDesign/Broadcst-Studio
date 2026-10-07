@@ -216,15 +216,17 @@
   width: 100%;
   height: 100%;
   min-height: 0;
-  padding: 18px;
-  overflow: auto;
+  padding: 16px 20px;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .ws-workspace--air {
-  display: grid;
-  grid-template-rows: auto minmax(240px, 1fr) 188px;
-  gap: 12px;
-  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .ws-command-row {
@@ -232,6 +234,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 18px;
+  flex-shrink: 0;
 }
 
 .ws-kicker {
@@ -598,23 +601,25 @@
 
 .ws-console {
   min-height: 0;
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(160px, 1fr)) minmax(190px, 1.25fr);
+  gap: 10px;
   overflow-x: auto;
-  padding-bottom: 4px;
+  padding-bottom: 6px;
+  width: 100%;
 }
 
 .ws-strip {
   position: relative;
-  width: 156px;
-  min-width: 156px;
+  min-width: 160px;
   min-height: 0;
-  display: grid;
-  grid-template-rows: 54px auto minmax(200px, 1fr) auto;
-  gap: 12px;
-  padding: 12px;
-  border-top: 1px solid var(--ws-line);
-  border-right: 1px solid var(--ws-line);
-  border-bottom: 1px solid var(--ws-line);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--ws-line);
+  border-radius: 7px;
   background: var(--ws-panel);
 }
 
@@ -623,16 +628,16 @@
 }
 
 .ws-strip--master {
-  width: 184px;
-  min-width: 184px;
   background: var(--ws-panel-2);
-  box-shadow: inset 0 2px 0 var(--ws-live);
+  border-color: color-mix(in srgb, var(--ws-live) 40%, var(--ws-line));
+  box-shadow: inset 0 2px 0 var(--ws-live), 0 4px 16px rgba(0, 0, 0, 0.25);
 }
 
 .ws-strip-head {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 5px;
+  padding-bottom: 8px;
   border-bottom: 1px solid var(--ws-line);
 }
 
@@ -658,6 +663,7 @@
   grid-template-columns: 1fr auto;
   gap: 8px;
   align-items: center;
+  padding: 2px 0;
 }
 
 .ws-strip-gain label {
@@ -678,17 +684,22 @@
 }
 
 .ws-strip-control {
-  min-height: 0;
+  min-height: 190px;
+  height: 210px;
   display: grid;
-  grid-template-columns: 25px minmax(0, 1fr);
+  grid-template-columns: 24px minmax(0, 1fr);
   gap: 12px;
+  align-items: stretch;
+  padding: 2px 0;
 }
 
 .ws-strip-meter {
   position: relative;
-  min-height: 0;
+  height: 100%;
   background: var(--ws-panel-3);
   border: 1px solid var(--ws-line);
+  border-radius: 3px;
+  overflow: hidden;
 }
 
 .ws-strip-meter::after {
@@ -719,27 +730,32 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 7px;
+  justify-content: space-between;
+  height: 100%;
 }
 
 .ws-strip-fader input[type="range"] {
-  height: 100%;
-  min-height: 180px;
+  height: 165px;
   writing-mode: vertical-lr;
   direction: rtl;
   accent-color: var(--ws-live);
+  cursor: pointer;
+  margin: 0;
 }
 
 .ws-strip-level {
   color: var(--ws-muted);
   font-family: var(--font-mono);
-  font-size: 8px;
+  font-size: 9px;
 }
 
 .ws-strip-actions {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 6px;
+  margin-top: auto;
+  padding-top: 8px;
+  border-top: 1px solid var(--ws-line);
 }
 
 .ws-mini-action {

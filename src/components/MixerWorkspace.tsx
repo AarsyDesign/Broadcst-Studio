@@ -159,8 +159,13 @@ export const MixerWorkspace: React.FC = () => {
                   data-kind="mute"
                   data-active={channel.muted}
                   onClick={() => handleToggleMute(channel.id)}
+                  style={{
+                    borderColor: channel.muted ? 'var(--ws-danger)' : undefined,
+                    color: channel.muted ? 'var(--ws-danger)' : undefined,
+                    background: channel.muted ? 'rgba(255, 95, 112, 0.12)' : undefined,
+                  }}
                 >
-                  Mute
+                  {channel.muted ? 'MUTED' : 'Mute'}
                 </button>
                 <button
                   type="button"
@@ -168,8 +173,13 @@ export const MixerWorkspace: React.FC = () => {
                   data-kind="solo"
                   data-active={channel.solo}
                   onClick={() => handleToggleSolo(channel.id)}
+                  style={{
+                    borderColor: channel.solo ? 'var(--ws-warning)' : undefined,
+                    color: channel.solo ? 'var(--ws-warning)' : undefined,
+                    background: channel.solo ? 'rgba(255, 184, 77, 0.12)' : undefined,
+                  }}
                 >
-                  Solo
+                  {channel.solo ? 'SOLO' : 'Solo'}
                 </button>
               </div>
             </div>
@@ -179,7 +189,7 @@ export const MixerWorkspace: React.FC = () => {
         <div className="ws-strip ws-strip--master">
           <div className="ws-strip-head">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span className="ws-strip-source">MAIN BUS</span>
+              <span className="ws-strip-source" style={{ color: 'var(--ws-live)' }}>MAIN BUS</span>
               <span
                 className="ws-badge"
                 data-variant={mixerState.masterPeakDb >= -0.5 ? 'danger' : mixerState.masterPeakDb >= -3 ? 'warning' : 'live'}
@@ -187,7 +197,7 @@ export const MixerWorkspace: React.FC = () => {
                 {mixerState.masterPeakDb >= -0.5 ? 'OVERLOAD' : mixerState.masterPeakDb > -50 ? 'ACTIVE' : 'SILENT'}
               </span>
             </div>
-            <span className="ws-strip-name">Master Output</span>
+            <span className="ws-strip-name" style={{ fontWeight: 780 }}>Master Output</span>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9px', fontFamily: 'var(--font-mono)', color: 'var(--ws-subtle)' }}>
               <span>P: {mixerState.masterPeakDb.toFixed(1)} dB</span>
               <span>R: {mixerState.masterRmsDb.toFixed(1)} dB</span>
@@ -228,11 +238,21 @@ export const MixerWorkspace: React.FC = () => {
               data-kind="mute"
               data-active={mixerState.masterMuted}
               onClick={handleToggleMasterMute}
+              style={{
+                borderColor: mixerState.masterMuted ? 'var(--ws-danger)' : undefined,
+                color: mixerState.masterMuted ? 'var(--ws-danger)' : undefined,
+                background: mixerState.masterMuted ? 'rgba(255, 95, 112, 0.12)' : undefined,
+              }}
             >
-              Mute
+              {mixerState.masterMuted ? 'MUTED' : 'Mute'}
             </button>
-            <button type="button" className="ws-mini-action" onClick={() => playCue('soundboard')}>
-              Cue
+            <button
+              type="button"
+              className="ws-mini-action"
+              onClick={() => playCue('soundboard')}
+              title="Play 440Hz test tone on master bus"
+            >
+              Test Tone
             </button>
           </div>
         </div>

@@ -216,6 +216,16 @@ class RecorderService {
     return this.sessions;
   }
 
+  public deleteSession(id: string): boolean {
+    const prevLen = this.sessions.length;
+    this.sessions = this.sessions.filter((s) => s.id !== id);
+    if (this.sessions.length !== prevLen) {
+      this.notifySessions();
+      return true;
+    }
+    return false;
+  }
+
   public async openRecordingFolder(path?: string): Promise<void> {
     if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
       const { invoke } = await import('@tauri-apps/api/core');

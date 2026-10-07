@@ -149,6 +149,19 @@ export const RecordingsWorkspace: React.FC = () => {
     showToast(`Exported transcript (${format.toUpperCase()})`);
   };
 
+  const handleRevealSession = (session: RecordedSession) => {
+    recorderService.openRecordingFolder(session.blobUrl);
+    showToast(`Opening folder containing ${session.title}`);
+  };
+
+  const handleDeleteSession = (id: string, title: string) => {
+    recorderService.deleteSession(id);
+    if (selectedSessionId === id) {
+      setSelectedSessionId(null);
+    }
+    showToast(`Deleted archive: ${title}`);
+  };
+
   const formatDuration = (seconds: number) => {
     const m = Math.floor(seconds / 60);
     const s = Math.floor(seconds % 60);
@@ -353,8 +366,31 @@ export const RecordingsWorkspace: React.FC = () => {
                         </div>
                       </div>
 
-                      <div style={{ textAlign: 'right' }}>
+                      <div style={{ textAlign: 'right', display: 'flex', alignItems: 'center', gap: '4px' }}>
                         <span className="ws-tag">SYNCED</span>
+                        <button
+                          type="button"
+                          className="ws-mini-action"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleRevealSession(session);
+                          }}
+                          title="Reveal file in Windows Explorer"
+                        >
+                          Reveal
+                        </button>
+                        <button
+                          type="button"
+                          className="ws-mini-action"
+                          style={{ color: 'var(--ws-danger)' }}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteSession(session.id, session.title);
+                          }}
+                          title="Delete recorded session"
+                        >
+                          ✕
+                        </button>
                       </div>
                     </div>
                   );
@@ -397,13 +433,22 @@ export const RecordingsWorkspace: React.FC = () => {
                       {selectedSession.title}
                     </h3>
                     <div style={{ fontSize: '11px', color: 'var(--ws-muted)' }}>
-                      Recorded on {new Date(selectedSession.startedAt).toLocaleString()} • Duration: {formatDuration(selectedSession.durationSeconds)}
+                      Recorded on {new Date(selectedSession.startedAt).toLocaleString()} • Duration: {formatDuration(selectedSession.durationSeconds)} • {formatFileSize(selectedSession.fileSizeBytes)}
                     </div>
                   </div>
 
                   <div style={{ display: 'flex', gap: '6px' }}>
+                    <button
+                      type="button"
+                      className="ws-secondary-action"
+                      style={{ height: '30px', fontSize: '10px' }}
+                      onClick={() => handleRevealSession(selectedSession)}
+                      title="Reveal in Windows Explorer"
+                    >
+                      Reveal
+                    </button>
                     <button type="button" className="ws-secondary-action" style={{ height: '30px', fontSize: '10px' }} onClick={handleExportAudio}>
-                      Download Audio
+                      Download
                     </button>
                     <button
                       type="button"
@@ -412,6 +457,15 @@ export const RecordingsWorkspace: React.FC = () => {
                       onClick={() => handleExportTranscript('srt')}
                     >
                       Export SRT
+                    </button>
+                    <button
+                      type="button"
+                      className="ws-secondary-action"
+                      style={{ height: '30px', fontSize: '10px', color: 'var(--ws-danger)' }}
+                      onClick={() => handleDeleteSession(selectedSession.id, selectedSession.title)}
+                      title="Delete recording archive"
+                    >
+                      Delete
                     </button>
                   </div>
                 </div>
