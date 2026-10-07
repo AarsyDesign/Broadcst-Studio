@@ -146,16 +146,56 @@ export const PERMISSION_CAPABILITY_MAP: Record<PluginPermission, PluginCapabilit
 
 /**
  * Output connection lifecycle states.
+ *
+ * Distinguishes between:
+ * - 'DISCONNECTED': Output is stopped and unconfigured.
+ * - 'CONFIGURED': Output parameters set; waiting for readiness.
+ * - 'READY': Output target initialized and ready to initiate transmission.
+ * - 'CONNECTING': Establishing transport connection or network handshake.
+ * - 'CONNECTED': Active transport streaming audio to endpoint.
+ * - 'RECONNECTING': Transport recovering from network disruption.
+ * - 'ERROR': Terminal or operational failure.
+ * - 'REFERENCE_ONLY': Architectural reference / simulation. Explicitly communicates
+ *   that no real RTMP/network audio transport is transmitting.
  */
 export type OutputConnectionState =
   | 'DISCONNECTED'
+  | 'CONFIGURED'
+  | 'READY'
   | 'CONNECTING'
   | 'CONNECTED'
   | 'RECONNECTING'
-  | 'ERROR';
+  | 'ERROR'
+  | 'REFERENCE_ONLY';
+
+/**
+ * Retry policy model for resilient output connections.
+ */
+export interface OutputRetryPolicy {
+  maxRetries: number;
+  retryIntervalMs: number;
+  exponentialBackoff: boolean;
+}
+
+/**
+ * Diagnostics telemetry for output stream troubleshooting.
+ */
+export interface OutputDiagnostics {
+  lastStateChange?: number;
+  reconnectAttempts?: number;
+  bytesSent?: number;
+  droppedFrames?: number;
+  latencyMs?: number;
+  reason?: string;
+}
 
 /**
  * Output runtime status descriptor.
+ *
+ * NOTE ON STATUS HONESTY:
+ * - "Plugin enabled" (host lifecycle) != "Output connected" (active media transport).
+ * - Never report state 'CONNECTED' unless real audio is actively streaming.
+ * - Architectural references must report state 'REFERENCE_ONLY' or 'READY'.
  */
 export interface OutputStatus {
   state: OutputConnectionState;
@@ -165,6 +205,18 @@ export interface OutputStatus {
   bitrateKbps?: number;
   error?: string;
   metadata?: Record<string, unknown>;
+  /** Explicit flag indicating this is an architectural reference without real transport */
+  isReferenceOnly?: boolean;
+  /** Whether the parent plugin instance is enabled in the host runtime */
+  pluginEnabled?: boolean;
+  /** Whether the underlying native media sink / transport is actively streaming */
+  transportRunning?: boolean;
+  /** Overall output health classification */
+  health?: 'HEALTHY' | 'DEGRADED' | 'DISCONNECTED' | 'ERROR' | 'UNSUPPORTED' | 'REFERENCE';
+  /** Configured retry policy */
+  retryPolicy?: OutputRetryPolicy;
+  /** Live diagnostics and error telemetry */
+  diagnostics?: OutputDiagnostics;
 }
 
 /**

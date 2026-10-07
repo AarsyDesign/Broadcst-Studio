@@ -25,6 +25,7 @@ export const PluginsWorkspace: React.FC = () => {
 
   // Manifest Inspector Modal
   const [inspectedManifest, setInspectedManifest] = useState<PluginManifest | null>(null);
+  const [inspectedOutputId, setInspectedOutputId] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   useEffect(() => {
@@ -637,55 +638,137 @@ export const PluginsWorkspace: React.FC = () => {
             </div>
 
             {/* Plugin Output Targets */}
-            {pluginOutputs.map((target) => (
-              <div
-                key={target.pluginId}
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  padding: '10px 12px',
-                  background: 'var(--ws-panel-2)',
-                  border: '1px solid var(--ws-line)',
-                  borderRadius: '6px',
-                }}
-              >
-                <div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <strong style={{ fontSize: '12px', color: 'var(--ws-text)' }}>{target.name}</strong>
-                    <span className="ws-tag">PLUGIN OUTPUT</span>
-                  </div>
-                  <div style={{ fontSize: '10.5px', color: 'var(--ws-muted)', marginTop: '2px', fontFamily: 'var(--font-mono)' }}>
-                    {target.status.destinationName} • {target.status.targetEndpoint || 'RTMP/Syndication Target'}
-                  </div>
-                </div>
+            {pluginOutputs.map((target) => {
+              const isRef = Boolean(target.status.isReferenceOnly || target.status.state === 'REFERENCE_ONLY');
+              const isTrulyLive = target.status.state === 'CONNECTED' && Boolean(target.status.transportRunning) && !isRef;
+              const isInspected = inspectedOutputId === target.pluginId;
 
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <span
-                    className="ws-badge"
-                    data-variant={target.status.state === 'CONNECTED' ? 'live' : target.status.state === 'CONNECTING' ? 'warning' : 'neutral'}
-                  >
-                    {target.status.state}
-                  </span>
-                  <button
-                    type="button"
-                    className={target.status.state === 'CONNECTED' ? 'ws-secondary-action' : 'ws-primary-action'}
-                    style={{ height: '28px', fontSize: '10.5px' }}
-                    onClick={async () => {
-                      if (target.status.state === 'CONNECTED') {
-                        await outputRouter.stopOutput(target.pluginId);
-                        showToast(`Stopped output: ${target.name}`);
-                      } else {
-                        await outputRouter.startOutput(target.pluginId);
-                        showToast(`Started output: ${target.name}`);
-                      }
-                    }}
-                  >
-                    {target.status.state === 'CONNECTED' ? 'Disconnect' : 'Connect Target'}
-                  </button>
+              return (
+                <div
+                  key={target.pluginId}
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '8px',
+                    padding: '10px 12px',
+                    background: 'var(--ws-panel-2)',
+                    border: '1px solid var(--ws-line)',
+                    borderRadius: '6px',
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <strong style={{ fontSize: '12px', color: 'var(--ws-text)' }}>{target.name}</strong>
+                        <span className="ws-tag">PLUGIN OUTPUT</span>
+                        {isRef && (
+                          <span className="ws-tag" style={{ color: 'var(--ws-accent)', borderColor: 'var(--ws-accent)' }}>
+                            ARCHITECTURAL REF
+                          </span>
+                        )}
+                      </div>
+                      <div style={{ fontSize: '10.5px', color: 'var(--ws-muted)', marginTop: '2px', fontFamily: 'var(--font-mono)' }}>
+                        {target.status.destinationName} • {target.status.targetEndpoint || 'RTMP/Syndication Target'}
+                      </div>
+                    </div>
+
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span
+                        className="ws-badge"
+                        data-variant={isTrulyLive ? 'live' : target.status.state === 'CONNECTING' ? 'warning' : 'neutral'}
+                        style={{
+                          color: isRef ? 'var(--ws-accent)' : undefined,
+                          borderColor: isRef ? 'var(--ws-accent)' : undefined,
+                        }}
+                      >
+                        {isRef ? 'REFERENCE ONLY' : target.status.state}
+                      </span>
+                      <button
+                        type="button"
+                        className="ws-mini-action"
+                        onClick={() => setInspectedOutputId(isInspected ? null : target.pluginId)}
+                        title="Inspect output capabilities & retry policy"
+                      >
+                        {isInspected ? 'Hide Info' : 'Inspect'}
+                      </button>
+                      <button
+                        type="button"
+                        className={isTrulyLive || (isRef && target.status.state === 'REFERENCE_ONLY') ? 'ws-secondary-action' : 'ws-primary-action'}
+                        style={{ height: '28px', fontSize: '10.5px' }}
+                        onClick={async () => {
+                          if (target.status.state === 'CONNECTED' || target.status.state === 'REFERENCE_ONLY') {
+                            await outputRouter.stopOutput(target.pluginId);
+                            showToast(`Deactivated output: ${target.name}`);
+                          } else {
+                            await outputRouter.startOutput(target.pluginId);
+                            showToast(`Activated output: ${target.name}`);
+                          }
+                        }}
+                      >
+                        {isRef
+                          ? target.status.state === 'REFERENCE_ONLY'
+                            ? 'Deactivate Ref'
+                            : 'Activate Ref'
+                          : target.status.state === 'CONNECTED'
+                          ? 'Disconnect'
+                          : 'Connect Target'}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Expandable Output Capability & Diagnostics Inspector */}
+                  {isInspected && (
+                    <div
+                      style={{
+                        marginTop: '4px',
+                        padding: '10px 12px',
+                        borderRadius: '4px',
+                        background: 'var(--ws-panel-3)',
+                        border: '1px solid var(--ws-line)',
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+                        gap: '8px',
+                        fontSize: '10.5px',
+                        fontFamily: 'var(--font-mono)',
+                      }}
+                    >
+                      <div>
+                        <span style={{ color: 'var(--ws-muted)' }}>Execution Domain:</span>{' '}
+                        <strong style={{ color: 'var(--ws-text)' }}>Domain B (Non-Realtime Async)</strong>
+                      </div>
+                      <div>
+                        <span style={{ color: 'var(--ws-muted)' }}>Media Boundary:</span>{' '}
+                        <strong style={{ color: 'var(--ws-accent)' }}>Native MediaSink (Rust)</strong>
+                      </div>
+                      <div>
+                        <span style={{ color: 'var(--ws-muted)' }}>Transport State:</span>{' '}
+                        <strong style={{ color: isTrulyLive ? 'var(--ws-live)' : 'var(--ws-warning)' }}>
+                          {isTrulyLive ? 'STREAMING' : 'NOT RUNNING'}
+                        </strong>
+                      </div>
+                      <div>
+                        <span style={{ color: 'var(--ws-muted)' }}>Health:</span>{' '}
+                        <strong style={{ color: 'var(--ws-text)' }}>{target.status.health || 'REFERENCE'}</strong>
+                      </div>
+                      {target.status.retryPolicy && (
+                        <div style={{ gridColumn: '1 / -1' }}>
+                          <span style={{ color: 'var(--ws-muted)' }}>Retry Policy:</span>{' '}
+                          <strong style={{ color: 'var(--ws-text)' }}>
+                            Max {target.status.retryPolicy.maxRetries} attempts @ {target.status.retryPolicy.retryIntervalMs}ms
+                            {target.status.retryPolicy.exponentialBackoff ? ' (Exponential Backoff)' : ''}
+                          </strong>
+                        </div>
+                      )}
+                      {target.status.diagnostics?.reason && (
+                        <div style={{ gridColumn: '1 / -1', color: 'var(--ws-muted)' }}>
+                          Diagnostic Note: {target.status.diagnostics.reason}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
 
           {/* Plugin Contributed UI Panels Section */}

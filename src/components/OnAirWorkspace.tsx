@@ -933,44 +933,81 @@ export const OnAirWorkspace: React.FC<OnAirWorkspaceProps> = ({
                   </span>
                 </div>
 
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                  {pluginOutputs.map((out) => (
-                    <div
-                      key={out.pluginId}
-                      style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'center',
-                        padding: '6px 10px',
-                        background: 'var(--ws-panel-2)',
-                        border: '1px solid var(--ws-line)',
-                        borderRadius: '4px',
-                      }}
-                    >
-                      <div>
-                        <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--ws-text)' }}>
-                          {out.name}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {pluginOutputs.map((out) => {
+                    const isRef = Boolean(out.status.isReferenceOnly || out.status.state === 'REFERENCE_ONLY');
+                    const isTrulyLive = out.status.state === 'CONNECTED' && Boolean(out.status.transportRunning) && !isRef;
+
+                    return (
+                      <div
+                        key={out.pluginId}
+                        style={{
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                          padding: '8px 10px',
+                          background: 'var(--ws-panel-2)',
+                          border: '1px solid var(--ws-line)',
+                          borderRadius: '4px',
+                        }}
+                      >
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <span
+                              style={{
+                                width: '7px',
+                                height: '7px',
+                                borderRadius: '50%',
+                                background: isTrulyLive
+                                  ? 'var(--ws-live)'
+                                  : isRef
+                                  ? 'var(--ws-accent)'
+                                  : out.status.state === 'CONNECTING'
+                                  ? 'var(--ws-warning)'
+                                  : 'var(--ws-muted)',
+                              }}
+                            />
+                            <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--ws-text)' }}>
+                              {out.name}
+                            </span>
+                            {isRef && (
+                              <span className="ws-tag" style={{ fontSize: '9px', color: 'var(--ws-accent)' }}>
+                                ARCHITECTURAL REF
+                              </span>
+                            )}
+                          </div>
+                          <div style={{ fontSize: '10px', color: 'var(--ws-muted)', fontFamily: 'var(--font-mono)' }}>
+                            Plugin: <strong style={{ color: out.enabled ? 'var(--ws-text)' : 'var(--ws-muted)' }}>{out.enabled ? 'ENABLED' : 'DISABLED'}</strong>
+                            {' • '}
+                            Transport: <strong style={{ color: isTrulyLive ? 'var(--ws-live)' : 'var(--ws-warning)' }}>
+                              {isTrulyLive ? 'RUNNING' : 'NOT RUNNING'}
+                            </strong>
+                            {' • '}
+                            Status: <strong style={{ color: 'var(--ws-text)' }}>{isRef ? 'REFERENCE ONLY' : out.status.state}</strong>
+                          </div>
                         </div>
-                        <div style={{ fontSize: '10px', color: 'var(--ws-muted)', fontFamily: 'var(--font-mono)' }}>
-                          {out.status.destinationName} • {out.status.targetEndpoint || 'Endpoint'}
-                        </div>
-                      </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                        <span
-                          className="ws-badge"
-                          data-variant={out.status.state === 'CONNECTED' ? 'live' : out.status.state === 'CONNECTING' ? 'warning' : 'neutral'}
-                          style={{ fontSize: '9px' }}
-                        >
-                          {out.status.state}
-                        </span>
-                        {out.status.state === 'CONNECTED' && (
-                          <span style={{ fontSize: '10px', fontFamily: 'var(--font-mono)', color: 'var(--ws-muted)' }}>
-                            {out.status.uptimeSeconds}s
+
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <span
+                            className="ws-badge"
+                            data-variant={isTrulyLive ? 'live' : out.status.state === 'CONNECTING' ? 'warning' : 'neutral'}
+                            style={{
+                              fontSize: '9px',
+                              borderColor: isRef ? 'var(--ws-accent)' : undefined,
+                              color: isRef ? 'var(--ws-accent)' : undefined,
+                            }}
+                          >
+                            {isRef ? 'REFERENCE ONLY' : out.status.state}
                           </span>
-                        )}
+                          {isTrulyLive && (
+                            <span style={{ fontSize: '10px', fontFamily: 'var(--font-mono)', color: 'var(--ws-muted)' }}>
+                              {out.status.uptimeSeconds}s
+                            </span>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             )}

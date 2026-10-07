@@ -15,17 +15,24 @@ export interface PluginOutputTarget {
  * Broadcst Studio Master Audio Output Router
  *
  * CONCEPTUAL ARCHITECTURE:
- * MASTER AUDIO
+ * MASTER AUDIO (Domain A - Rust Realtime AudioEngine)
  *     ↓
- * OUTPUT ROUTER
- *     ├── Native SHOUTcast (First-class Rust native pipeline)
- *     └── Plugin Outputs (Telegram Live, RTMP, YouTube, community streams)
+ * NATIVE OUTPUT ROUTER (Rust Native Media Sinks)
+ *     ├── Native SHOUTcast Stream (MP3 Direct TCP)
+ *     ├── Native Master Recorder (WAV Capture)
+ *     └── Plugin-Backed Native Media Sinks (RTMP / HLS / WebRTC)
  *
- * REALTIME BOUNDARY:
- * Native SHOUTcast runs in the high-performance Rust core (lib.rs / shoutcast/).
- * Output plugins implement the OutputPlugin contract for lifecycle, endpoint configuration,
- * metadata updates, and status.
- * Raw PCM is NOT routed across the React DOM/event thread.
+ * CONTROL & METADATA DOMAIN (Domain B - TypeScript / Non-Realtime Async):
+ *     ↓
+ * PLUGIN OUTPUT ROUTER (This Service)
+ *     ├── Target Discovery & Capability Inspection
+ *     ├── Lifecycle & Command Routing (output.start / output.stop)
+ *     ├── Metadata Forwarding (Track title & artist ICY sync)
+ *     └── Status & Telemetry Aggregation
+ *
+ * STRICT REALTIME BOUNDARY:
+ * - Raw PCM frames are NEVER copied or routed through JavaScript, React, or event buses.
+ * - "Plugin enabled" (host lifecycle) != "Output connected" (media streaming).
  */
 class OutputRouter {
   private subscribers: Set<() => void> = new Set();
@@ -36,7 +43,7 @@ class OutputRouter {
   }
 
   /**
-   * Automatically forwards on-air track changes to all active output plugins.
+   * Automatically forwards on-air track changes to all active output targets.
    */
   private setupMetadataForwarding() {
     this.busUnsub = eventBus.on('deck:track_started', (payload: any) => {
@@ -70,14 +77,21 @@ class OutputRouter {
     plugins.forEach((inst: PluginInstance) => {
       if (inst.manifest.type === 'OUTPUT' && inst.plugin) {
         const outPlugin = inst.plugin as unknown as OutputPlugin;
-        const status: OutputStatus =
+        const rawStatus: OutputStatus =
           typeof outPlugin.getOutputStatus === 'function'
             ? outPlugin.getOutputStatus()
             : {
-                state: inst.enabled ? 'CONNECTED' : 'DISCONNECTED',
+                state: inst.enabled ? 'READY' : 'DISCONNECTED',
                 uptimeSeconds: 0,
                 destinationName: inst.manifest.name,
+                isReferenceOnly: false,
+                transportRunning: false,
               };
+
+        const status: OutputStatus = {
+          ...rawStatus,
+          pluginEnabled: inst.enabled,
+        };
 
         targets.push({
           pluginId: inst.manifest.id,
@@ -93,10 +107,15 @@ class OutputRouter {
   }
 
   /**
-   * Returns only active and connected output plugins.
+   * Returns only active output plugins capable of receiving metadata.
+   * Includes both connected live outputs and active reference outputs.
    */
   public getActivePluginOutputs(): PluginOutputTarget[] {
-    return this.getPluginOutputs().filter((t) => t.enabled && t.status.state === 'CONNECTED');
+    return this.getPluginOutputs().filter(
+      (t) =>
+        t.enabled &&
+        (t.status.state === 'CONNECTED' || t.status.state === 'REFERENCE_ONLY')
+    );
   }
 
   /**

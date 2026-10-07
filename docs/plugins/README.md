@@ -173,20 +173,37 @@ export interface AudioProcessorPlugin extends Plugin {
 
 Broadcst Studio introduces the **Output Plugin API** for syndicating master broadcast audio to external platforms (Telegram Live, RTMP relays, YouTube Live, Discord voice bots, Twitch) without hardcoding platform logic into the application core.
 
-### Master Audio Routing Boundary
-```
-MASTER AUDIO
-    ↓
-OUTPUT ROUTER
-    ├── Native SHOUTcast (First-class Rust native MP3/DNAS pipeline)
-    └── Plugin Outputs (Telegram Live, RTMP, community streamers)
+### Strict Media Boundary: Control Domain vs. Realtime Media Transport
+```text
+MASTER AUDIO (Domain A - Rust Realtime AudioEngine)
+       ↓
+NATIVE OUTPUT ROUTER (Rust Native Media Sinks)
+  ├── Native SHOUTcast Stream (First-class MP3 DNAS pipeline)
+  ├── Native Master Recorder (Lossless WAV Capture)
+  └── Plugin-Backed Native Media Sinks (Extensible Realtime Boundary)
+
+PLUGIN CONTROL DOMAIN (Domain B - TypeScript / Non-Realtime Async)
+       ↓
+OutputPlugin Contract
+  ├── Destination Configuration & Endpoint Negotiation
+  ├── Lifecycle Commands (output.start / output.stop)
+  ├── Live Metadata Synchronization (Track title & artist ICY sync)
+  ├── Status & Diagnostics Telemetry
+  └── Controlled Workstation UI Panels (OUTPUT_PANEL / ON_AIR_PANEL)
 ```
 
-- **Native SHOUTcast** remains the primary, low-latency broadcast transmission target implemented in Rust core (`lib.rs / shoutcast`).
-- **Output Plugins** implement connection lifecycle, destination configuration (stream keys, URLs), now-playing metadata updates, and status telemetry.
-- **Realtime Safety Boundary**: Raw PCM is not routed through React event buses. Output plugins manage connection negotiation, status, and control; their streaming worker interfaces with the native audio boundary.
+- **Zero PCM in JavaScript**: Raw audio frames are **never** copied or routed through JavaScript, React, or browser event buses. Realtime processing executes strictly within the Rust audio engine.
+- **Native `MediaSink` Contract**: Downstream destinations interface with the native engine via `MediaSink` (`src-tauri/src/audio/sink.rs`):
+  - `open(config: MediaSinkConfig) -> Result<(), MediaSinkError>`
+  - `start() -> Result<(), MediaSinkError>`
+  - `write_block(pcm_interleaved: &[f32]) -> Result<usize, MediaSinkError>` (Canonical: 48kHz, 2 channels, 480 frames = 960 samples per block)
+  - `flush() -> Result<(), MediaSinkError>`
+  - `stop() -> Result<(), MediaSinkError>`
+  - `close() -> Result<(), MediaSinkError>`
+  - `state() -> MediaSinkState`
+  - `metrics() -> MediaSinkMetrics`
 
-### Output Plugin Contract
+### Output Plugin Contract (TypeScript SDK)
 ```typescript
 export interface OutputPlugin<TConfig = OutputPluginConfig> extends Plugin {
   readonly manifest: PluginManifest & { type: 'OUTPUT' };
@@ -197,12 +214,25 @@ export interface OutputPlugin<TConfig = OutputPluginConfig> extends Plugin {
 }
 ```
 
-Output status distinguishes 5 deterministic states:
-- `DISCONNECTED`
-- `CONNECTING`
-- `CONNECTED`
-- `RECONNECTING`
-- `ERROR`
+### Honest Output Status Semantics
+Broadcst Studio enforces strict status honesty:
+- **`DISCONNECTED`**: Output target is inactive.
+- **`CONFIGURED`**: Endpoint parameters provided; awaiting activation.
+- **`READY`**: Target initialized and ready to initiate streaming.
+- **`CONNECTING`**: Establishing network transport handshake.
+- **`CONNECTED`**: Real audio transport actively streaming to endpoint. (Never reported unless `transportRunning: true`).
+- **`RECONNECTING`**: Transport recovering from connection loss.
+- **`ERROR`**: Operational or network failure with diagnostics.
+- **`REFERENCE_ONLY`**: Architectural reference / simulation. Explicitly communicates that no real RTMP/network audio transport is transmitting.
+
+> [!IMPORTANT]
+> **Status Honesty Principle:**
+> "Plugin enabled" (host lifecycle) is **NOT** equal to "Output connected" (active audio stream). An architectural reference plugin must never claim `CONNECTED` or fake uptime, bitrate, or listener counts.
+
+### Credential & Stream Key Security
+- **In-Memory Retention**: Secrets and stream keys are held strictly in memory during the runtime session.
+- **No Secret Logging**: Stream keys are never passed to `context.logger` or exposed in unmasked telemetry endpoints.
+- **Future Vault Integration**: Future production releases will bind credential storage directly to the OS secure key vault (Tauri Keyring).
 
 ---
 

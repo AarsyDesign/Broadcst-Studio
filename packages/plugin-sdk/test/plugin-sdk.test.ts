@@ -180,19 +180,123 @@ test('Output Plugin Contract: lifecycle status transitions and execution domain'
   const { getExecutionDomain } = await import('../src/index.ts');
   assert.equal(getExecutionDomain('OUTPUT'), 'NON_REALTIME_ASYNC');
 
-  // Verify status states
-  type StatusState = 'DISCONNECTED' | 'CONNECTING' | 'CONNECTED' | 'RECONNECTING' | 'ERROR';
-  const states: StatusState[] = ['DISCONNECTED', 'CONNECTING', 'CONNECTED', 'RECONNECTING', 'ERROR'];
-  assert.equal(states.length, 5);
+  // Verify all 8 honest status states are recognized
+  type StatusState =
+    | 'DISCONNECTED'
+    | 'CONFIGURED'
+    | 'READY'
+    | 'CONNECTING'
+    | 'CONNECTED'
+    | 'RECONNECTING'
+    | 'ERROR'
+    | 'REFERENCE_ONLY';
 
-  const mockOutputStatus = {
-    state: 'CONNECTED' as const,
-    uptimeSeconds: 42,
-    destinationName: 'Telegram Live Channel',
-    targetEndpoint: 'rtmps://dc4-1.rtmp.t.me/s/',
-    bitrateKbps: 128,
+  const states: StatusState[] = [
+    'DISCONNECTED',
+    'CONFIGURED',
+    'READY',
+    'CONNECTING',
+    'CONNECTED',
+    'RECONNECTING',
+    'ERROR',
+    'REFERENCE_ONLY',
+  ];
+  assert.equal(states.length, 8);
+});
+
+test('Output Honesty: reference-only plugin enforces REFERENCE_ONLY and non-live transport', () => {
+  // Honest architectural reference status
+  const referenceStatus = {
+    state: 'REFERENCE_ONLY' as const,
+    uptimeSeconds: 0,
+    bitrateKbps: 0,
+    destinationName: 'Telegram Live (Architectural Reference)',
+    targetEndpoint: 'rtmps://dc4-1.rtmp.t.me/s/[masked]',
+    isReferenceOnly: true,
+    pluginEnabled: true,
+    transportRunning: false,
+    health: 'REFERENCE' as const,
+    retryPolicy: {
+      maxRetries: 3,
+      retryIntervalMs: 5000,
+      exponentialBackoff: true,
+    },
+    diagnostics: {
+      reason: 'Architectural reference active: Media transport will bind to Native Media Sink once RTMP encoder is linked.',
+    },
   };
-  assert.equal(mockOutputStatus.state, 'CONNECTED');
-  assert.equal(mockOutputStatus.bitrateKbps, 128);
+
+  assert.equal(referenceStatus.state, 'REFERENCE_ONLY');
+  assert.equal(referenceStatus.isReferenceOnly, true);
+  assert.equal(referenceStatus.transportRunning, false);
+  assert.equal(referenceStatus.uptimeSeconds, 0);
+  assert.equal(referenceStatus.bitrateKbps, 0);
+  assert.ok(referenceStatus.diagnostics.reason.includes('Native Media Sink'));
+
+  // Honesty check: Disallow fake CONNECTED when transport is not running
+  const isHonestConnected = (s: typeof referenceStatus) => {
+    return s.state === 'CONNECTED' ? s.transportRunning === true && !s.isReferenceOnly : true;
+  };
+  assert.equal(isHonestConnected(referenceStatus), true);
+
+  const fakeConnectedStatus = {
+    ...referenceStatus,
+    state: 'CONNECTED' as const,
+    transportRunning: false,
+    isReferenceOnly: true,
+  };
+  assert.equal(isHonestConnected(fakeConnectedStatus), false, 'Fake CONNECTED state without transportRunning must fail honesty validation');
+});
+
+test('Package Loader: detects entrypoint filename mismatch between manifest and package', async () => {
+  const { validatePluginPackage, PLUGIN_API_VERSION } = await import('../src/index.ts');
+
+  // 1. Mismatch: Manifest says index.ts, package provides index.tsx
+  const mismatchedPkg = {
+    manifest: {
+      id: 'org.broadcst.example.telegram-output',
+      name: 'Telegram Live Audio Streamer',
+      version: '1.0.0',
+      apiVersion: PLUGIN_API_VERSION,
+      author: 'Broadcst Community Examples',
+      description: 'Reference output plugin',
+      type: 'OUTPUT' as const,
+      permissions: ['output.manage' as const],
+      entryPoint: 'index.ts', // Mismatch
+    },
+    entryPointFilename: 'index.tsx', // Provided file
+    entryPointCode: 'export default { initialize() {} };',
+  };
+
+  const mismatchRes = validatePluginPackage(mismatchedPkg);
+  assert.equal(mismatchRes.success, false);
+  assert.ok(mismatchRes.error?.includes('Package entrypoint mismatch'));
+  assert.ok(mismatchRes.error?.includes('index.ts'));
+  assert.ok(mismatchRes.error?.includes('index.tsx'));
+
+  // 2. Matching: Manifest says index.tsx, package provides index.tsx
+  const matchingPkg = {
+    ...mismatchedPkg,
+    manifest: {
+      ...mismatchedPkg.manifest,
+      entryPoint: 'index.tsx',
+    },
+  };
+  const matchingRes = validatePluginPackage(matchingPkg);
+  assert.equal(matchingRes.success, true);
+  assert.ok(matchingRes.manifest);
+  assert.equal(matchingRes.manifest.entryPoint, 'index.tsx');
+
+  // 3. Missing file in files dictionary
+  const missingFilePkg = {
+    manifest: matchingPkg.manifest,
+    entryPointCode: 'export default {};',
+    files: {
+      'other.ts': 'console.log("hello");',
+    },
+  };
+  const missingFileRes = validatePluginPackage(missingFilePkg);
+  assert.equal(missingFileRes.success, false);
+  assert.ok(missingFileRes.error?.includes('was not found in package files'));
 });
 

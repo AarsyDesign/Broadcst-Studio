@@ -20,6 +20,10 @@ export interface PluginPackage {
   readonly manifest: PluginManifest;
   /** Compiled/bundled entrypoint runtime source code */
   readonly entryPointCode?: string;
+  /** Actual filename of the entrypoint file in the package (e.g. index.tsx) */
+  readonly entryPointFilename?: string;
+  /** Package file hierarchy mapping relative path to source content */
+  readonly files?: Record<string, string>;
   /** Optional packaged assets (icons, stylesheets, models) */
   readonly assets?: Record<string, string>;
   /** Optional documentation markdown */
@@ -95,6 +99,34 @@ export function validatePluginPackage(candidate: unknown): PackageLoadResult {
         validation: val,
         error: 'Package declares entryPoint but provides no valid entrypoint implementation code.',
       };
+    }
+
+    // Verify declared entryPoint matches package entryPointFilename if provided
+    if (typeof raw.entryPointFilename === 'string') {
+      const filename = raw.entryPointFilename.trim();
+      if (filename && filename !== val.manifest.entryPoint) {
+        return {
+          success: false,
+          source: 'PLUGIN_PACKAGE',
+          manifest: val.manifest,
+          validation: val,
+          error: `Package entrypoint mismatch: manifest declares "${val.manifest.entryPoint}" but package entrypoint file is "${filename}".`,
+        };
+      }
+    }
+
+    // Verify declared entryPoint exists in files dictionary if provided
+    if (raw.files && typeof raw.files === 'object') {
+      const filesMap = raw.files as Record<string, unknown>;
+      if (!filesMap[val.manifest.entryPoint]) {
+        return {
+          success: false,
+          source: 'PLUGIN_PACKAGE',
+          manifest: val.manifest,
+          validation: val,
+          error: `Package entrypoint file "${val.manifest.entryPoint}" was not found in package files.`,
+        };
+      }
     }
   }
 

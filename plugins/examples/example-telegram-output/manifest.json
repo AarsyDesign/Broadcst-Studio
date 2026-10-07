@@ -11,8 +11,8 @@
     "metadata.read",
     "ui.contribute"
   ],
-  "entryPoint": "index.ts",
+  "entryPoint": "index.tsx",
   "homepage": "https://github.com/AarsyDesign/Broadcst-Studio",
   "license": "MIT",
-  "tags": ["output", "streaming", "telegram", "rtmp", "syndication"]
+  "tags": ["output", "streaming", "telegram", "rtmp", "reference"]
 }
