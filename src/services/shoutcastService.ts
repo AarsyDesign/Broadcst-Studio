@@ -1,4 +1,5 @@
 import { BroadcastState, BroadcastStatus, ShoutcastConfig, TrackMetadata } from '../types/broadcast';
+import { BroadcastPreflightError } from '../types/ipc';
 import { StreamMetrics } from '../types/telemetry';
 import { logger } from './logger';
 
@@ -41,6 +42,26 @@ class ShoutcastService {
   private timerInterval?: number;
   private statusListeners: Set<StatusChangeListener> = new Set();
   private metricsListeners: Set<MetricsChangeListener> = new Set();
+
+  public async validatePreflight(config?: ShoutcastConfig): Promise<BroadcastPreflightError[]> {
+    if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        return await invoke('broadcast_preflight_validate', { config: config || this.config });
+      } catch (err) {
+        logger.error('Shoutcast', 'Preflight validation failed', { error: err });
+      }
+    }
+    const target = config || this.config;
+    const errors: BroadcastPreflightError[] = [];
+    if (!target.server || target.server.trim() === '') {
+      errors.push({ field: 'server', code: 'REQUIRED', message: 'Broadcast server hostname or IP is required.' });
+    }
+    if (!target.port || target.port === 0) {
+      errors.push({ field: 'port', code: 'INVALID', message: 'Broadcast server port is invalid.' });
+    }
+    return errors;
+  }
 
   public getConfig(): ShoutcastConfig {
     return { ...this.config };
@@ -137,11 +158,9 @@ class ShoutcastService {
         this.uptimeSeconds += 1;
         this.metrics.bytesSent += bytesPerSecond;
 
-        // Slight natural variance in network telemetry
-        const jitter = (Math.random() - 0.5) * 1.8;
-        this.metrics.actualUploadKbps = Math.max(0, this.config.bitrate + jitter);
-        this.metrics.bufferHealthRatio = Math.min(1.0, 0.95 + Math.random() * 0.05);
-        this.metrics.networkLatencyMs = Math.round(20 + Math.random() * 8);
+        this.metrics.actualUploadKbps = this.config.bitrate;
+        this.metrics.bufferHealthRatio = 1.0;
+        this.metrics.networkLatencyMs = 0; // Unmeasured without ICMP ping probe
 
         this.notifyStatus();
         this.notifyMetrics();

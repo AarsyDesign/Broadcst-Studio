@@ -43,6 +43,32 @@ class RecorderService {
   public async startRecording(customTitle?: string): Promise<boolean> {
     if (this.state === 'RECORDING') return true;
 
+    // Native Tauri recording branch
+    if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        const res: any = await invoke('recording_start');
+        this.currentSessionId = res.id;
+        this.recordingStartTime = Date.now();
+        this.currentDurationSeconds = 0;
+        this.state = 'RECORDING';
+
+        this.durationInterval = window.setInterval(() => {
+          if (this.state === 'RECORDING') {
+            this.currentDurationSeconds += 1;
+            this.notifyState();
+          }
+        }, 1000);
+
+        this.notifyState();
+        logger.info('Recorder', `Native master recording started: ${res.filePath}`);
+        return true;
+      } catch (err) {
+        logger.error('Recorder', 'Failed to start native recording', { error: err });
+        return false;
+      }
+    }
+
     const stream = audioEngine.getMasterMediaStream();
     if (!stream) {
       logger.error('Recorder', 'Cannot start recording: master audio stream destination is not available');
@@ -108,7 +134,36 @@ class RecorderService {
     }
   }
 
-  public stopRecording(): Promise<RecordedSession | null> {
+  public async stopRecording(): Promise<RecordedSession | null> {
+    if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
+      if (this.durationInterval) {
+        clearInterval(this.durationInterval);
+        this.durationInterval = undefined;
+      }
+      this.state = 'IDLE';
+      this.notifyState();
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        const res: any = await invoke('recording_stop');
+        const session: RecordedSession = {
+          id: res.id,
+          title: `Broadcast Master ${new Date().toLocaleDateString('id-ID')}`,
+          startedAt: new Date(this.recordingStartTime || Date.now()).toISOString(),
+          endedAt: new Date().toISOString(),
+          durationSeconds: res.durationSeconds || this.currentDurationSeconds,
+          fileSizeBytes: 0,
+          blobUrl: res.filePath,
+          mimeType: 'audio/wav',
+        };
+        this.sessions.unshift(session);
+        this.notifySessions();
+        return session;
+      } catch (err) {
+        logger.error('Recorder', 'Failed to stop native recording', { error: err });
+        return null;
+      }
+    }
+
     return new Promise((resolve) => {
       if (!this.mediaRecorder || this.state === 'IDLE') {
         resolve(null);
@@ -134,6 +189,48 @@ class RecorderService {
         }
       }, 50);
     });
+  }
+
+  public async fetchHistory(): Promise<RecordedSession[]> {
+    if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        const history: any[] = await invoke('recording_get_history');
+        if (Array.isArray(history)) {
+          this.sessions = history.map((item) => ({
+            id: item.id,
+            title: item.fileName,
+            startedAt: item.startedAt,
+            endedAt: item.stoppedAt,
+            durationSeconds: item.durationSeconds,
+            fileSizeBytes: item.fileSizeBytes,
+            blobUrl: item.filePath,
+            mimeType: 'audio/wav',
+          }));
+          this.notifySessions();
+        }
+      } catch (e) {
+        logger.warn('Recorder', 'Could not fetch native history', { error: e });
+      }
+    }
+    return this.sessions;
+  }
+
+  public deleteSession(id: string): boolean {
+    const prevLen = this.sessions.length;
+    this.sessions = this.sessions.filter((s) => s.id !== id);
+    if (this.sessions.length !== prevLen) {
+      this.notifySessions();
+      return true;
+    }
+    return false;
+  }
+
+  public async openRecordingFolder(path?: string): Promise<void> {
+    if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('recording_open_folder', { path });
+    }
   }
 
   public onStateChange(callback: (state: RecorderState, duration: number) => void): () => void {

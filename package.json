@@ -7,6 +7,7 @@
     "dev": "node node_modules/vite/bin/vite.js",
     "build": "node node_modules/typescript/bin/tsc && node node_modules/vite/bin/vite.js build",
     "preview": "node node_modules/vite/bin/vite.js preview",
+    "test": "npx tsx --test packages/plugin-sdk/test/plugin-sdk.test.ts",
     "tauri": "node node_modules/@tauri-apps/cli/tauri.js"
   },
   "dependencies": {

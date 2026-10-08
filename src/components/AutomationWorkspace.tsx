@@ -6,11 +6,15 @@ export const AutomationWorkspace: React.FC = () => {
   const [rules, setRules] = useState<AutomationRule[]>(automationEngine.getRules());
   const [logs, setLogs] = useState<AutomationExecutionLog[]>(automationEngine.getLogs());
 
-  // Simple form state for adding a custom rule
+  // Add rule modal state
   const [showAddModal, setShowAddModal] = useState<boolean>(false);
   const [newRuleName, setNewRuleName] = useState<string>('');
   const [newRuleDesc, setNewRuleDesc] = useState<string>('');
-  const [newRuleAction, setNewRuleAction] = useState<string>('PLAY_TONE');
+  const [newEventName, setNewEventName] = useState<string>('broadcast.status.changed');
+  const [newConditionKey, setNewConditionKey] = useState<string>('state');
+  const [newConditionValue, setNewConditionValue] = useState<string>('CONNECTED');
+  const [newActionType, setNewActionType] = useState<string>('START_RECORD');
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   useEffect(() => {
     const unsubRules = automationEngine.onRulesChanged((r) => setRules(r));
@@ -22,16 +26,25 @@ export const AutomationWorkspace: React.FC = () => {
     };
   }, []);
 
+  const showToast = (msg: string) => {
+    setToastMessage(msg);
+    setTimeout(() => setToastMessage(null), 3000);
+  };
+
   const handleToggleRule = (id: string) => {
     automationEngine.toggleRule(id);
+    const r = rules.find((item) => item.id === id);
+    showToast(`Rule ${r?.name} is now ${!r?.enabled ? 'enabled' : 'disabled'}`);
   };
 
   const handleRunNow = async (rule: AutomationRule) => {
-    await automationEngine.executeRule(rule, 'Manual operator trigger via console');
+    await automationEngine.executeRule(rule, 'Manual operator test trigger');
+    showToast(`Executed pipeline: "${rule.name}"`);
   };
 
   const handleDeleteRule = (id: string) => {
     automationEngine.deleteRule(id);
+    showToast('Rule removed from automation engine');
   };
 
   const handleCreateRule = (e: React.FormEvent) => {
@@ -40,332 +53,365 @@ export const AutomationWorkspace: React.FC = () => {
 
     automationEngine.addRule({
       name: newRuleName.trim(),
-      description: newRuleDesc.trim() || 'Custom operator automation macro.',
+      description: newRuleDesc.trim() || 'Custom studio event automation pipeline.',
       enabled: true,
       trigger: {
         type: 'EVENT',
-        eventName: 'broadcast.status.changed',
+        eventName: newEventName,
+        eventCondition: { key: newConditionKey, value: newConditionValue },
       },
       action: {
-        type: newRuleAction as any,
+        type: newActionType as any,
       },
     });
 
     setNewRuleName('');
     setNewRuleDesc('');
     setShowAddModal(false);
+    showToast('New automation pipeline saved');
   };
 
   return (
-    <div
-      style={{
-        flex: 1,
-        display: 'flex',
-        flexDirection: 'column',
-        padding: 'var(--space-5)',
-        gap: 'var(--space-4)',
-        backgroundColor: 'var(--color-bg)',
-        overflowY: 'auto',
-      }}
-    >
-      <header
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          backgroundColor: 'var(--color-surface)',
-          padding: 'var(--space-3) var(--space-4)',
-          borderRadius: 'var(--radius-md)',
-          border: '1px solid var(--color-border)',
-        }}
-      >
+    <section className="ws-workspace" style={{ display: 'grid', gridTemplateRows: 'auto minmax(0, 1.3fr) minmax(180px, 0.9fr)', gap: '14px', height: '100%' }}>
+      {/* Command & Control Bar */}
+      <div className="ws-command-row">
         <div>
-          <h1 style={{ fontSize: 'var(--text-h2)', fontWeight: 700, margin: 0 }}>
-            Broadcast Automation Rules
-          </h1>
-          <p style={{ fontSize: 'var(--text-small)', color: 'var(--color-text-secondary)', marginTop: '2px' }}>
-            Event-driven triggers and scheduled macros executed via the safe Control API.
+          <div className="ws-kicker">System / Orchestration</div>
+          <h1 className="ws-title">Automation & Event Rule Engine</h1>
+          <p className="ws-subtitle">
+            Deterministic state triggers executing scheduled macros, stream redundancy failovers, and auto-archiving.
           </p>
         </div>
 
-        <button
-          onClick={() => setShowAddModal(true)}
-          style={{
-            padding: 'var(--space-2) var(--space-4)',
-            backgroundColor: 'var(--color-live)',
-            color: 'var(--color-live-text)',
-            borderRadius: 'var(--radius-sm)',
-            fontWeight: 700,
-            fontSize: 'var(--text-small)',
-          }}
-        >
-          Add Custom Rule
-        </button>
-      </header>
-
-      {/* Modal / Panel for Adding Custom Rule */}
-      {showAddModal && (
-        <section
-          style={{
-            backgroundColor: 'var(--color-surface-elevated)',
-            border: '2px solid var(--color-live)',
-            borderRadius: 'var(--radius-md)',
-            padding: 'var(--space-4)',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 'var(--space-3)',
-          }}
-        >
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <h2 style={{ fontSize: 'var(--text-body)', fontWeight: 700, margin: 0 }}>
-              Create New Automation Rule
-            </h2>
-            <button
-              onClick={() => setShowAddModal(false)}
-              style={{ fontSize: 'var(--text-small)', color: 'var(--color-text-muted)' }}
-            >
-              Cancel
-            </button>
-          </div>
-
-          <form onSubmit={handleCreateRule} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-            <div>
-              <label style={{ display: 'block', fontSize: 'var(--text-micro)', color: 'var(--color-text-secondary)', marginBottom: '4px' }}>
-                RULE NAME
-              </label>
-              <input
-                type="text"
-                placeholder="e.g. Play ID tone on connect"
-                value={newRuleName}
-                onChange={(e) => setNewRuleName(e.target.value)}
-                style={{ width: '100%' }}
-                required
-              />
-            </div>
-
-            <div>
-              <label style={{ display: 'block', fontSize: 'var(--text-micro)', color: 'var(--color-text-secondary)', marginBottom: '4px' }}>
-                DESCRIPTION
-              </label>
-              <input
-                type="text"
-                placeholder="Purpose of this automation"
-                value={newRuleDesc}
-                onChange={(e) => setNewRuleDesc(e.target.value)}
-                style={{ width: '100%' }}
-              />
-            </div>
-
-            <div>
-              <label style={{ display: 'block', fontSize: 'var(--text-micro)', color: 'var(--color-text-secondary)', marginBottom: '4px' }}>
-                TARGET ACTION
-              </label>
-              <select
-                value={newRuleAction}
-                onChange={(e) => setNewRuleAction(e.target.value)}
-                style={{ width: '100%' }}
-              >
-                <option value="PLAY_TONE">Play Audio Cue / Chime Tone</option>
-                <option value="START_RECORD">Start Master Audio Recording</option>
-                <option value="STOP_RECORD">Stop Master Audio Recording</option>
-                <option value="START_BROADCAST">Connect Broadcast Stream</option>
-                <option value="STOP_BROADCAST">Disconnect Broadcast Stream</option>
-              </select>
-            </div>
-
-            <button
-              type="submit"
-              style={{
-                marginTop: 'var(--space-2)',
-                padding: 'var(--space-2) var(--space-4)',
-                backgroundColor: 'var(--color-live)',
-                color: 'var(--color-live-text)',
-                fontWeight: 700,
-                borderRadius: 'var(--radius-sm)',
-              }}
-            >
-              SAVE AUTOMATION RULE
-            </button>
-          </form>
-        </section>
-      )}
-
-      {/* Rules Grid */}
-      <section style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-        <h2 style={{ fontSize: 'var(--text-body)', fontWeight: 600, margin: 0 }}>
-          Configured Rules ({rules.length})
-        </h2>
-
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-          {rules.map((rule) => (
-            <div
-              key={rule.id}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                padding: 'var(--space-4)',
-                backgroundColor: 'var(--color-surface)',
-                border: `1px solid ${rule.enabled ? 'var(--color-border)' : 'var(--color-border-subtle)'}`,
-                borderRadius: 'var(--radius-md)',
-                opacity: rule.enabled ? 1 : 0.65,
-                gap: 'var(--space-4)',
-              }}
-            >
-              {/* Left Details */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', flex: 1 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
-                  <span style={{ fontWeight: 600, color: 'var(--color-text-primary)' }}>
-                    {rule.name}
-                  </span>
-                  <span
-                    style={{
-                      fontSize: 'var(--text-micro)',
-                      padding: '1px 6px',
-                      borderRadius: 'var(--radius-sm)',
-                      backgroundColor: 'var(--color-surface-elevated)',
-                      color: 'var(--color-info)',
-                      fontWeight: 600,
-                    }}
-                  >
-                    {rule.trigger.type === 'EVENT' ? `EVENT: ${rule.trigger.eventName}` : `INTERVAL: ${rule.trigger.intervalSeconds}s`}
-                  </span>
-                  <span
-                    style={{
-                      fontSize: 'var(--text-micro)',
-                      padding: '1px 6px',
-                      borderRadius: 'var(--radius-sm)',
-                      backgroundColor: 'var(--color-surface-elevated)',
-                      color: 'var(--color-live)',
-                      fontWeight: 600,
-                    }}
-                  >
-                    ACTION: {rule.action.type}
-                  </span>
-                </div>
-
-                <span style={{ fontSize: 'var(--text-small)', color: 'var(--color-text-secondary)' }}>
-                  {rule.description}
-                </span>
-
-                <div style={{ display: 'flex', gap: 'var(--space-4)', fontSize: 'var(--text-micro)', color: 'var(--color-text-muted)' }}>
-                  <span>Triggers: {rule.triggerCount} time(s)</span>
-                  {rule.lastTriggeredAt && (
-                    <span>Last run: {new Date(rule.lastTriggeredAt).toLocaleTimeString('id-ID')}</span>
-                  )}
-                </div>
-              </div>
-
-              {/* Action Buttons */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
-                <button
-                  onClick={() => handleRunNow(rule)}
-                  title="Test run this automation rule now"
-                  style={{
-                    padding: 'var(--space-2) var(--space-3)',
-                    backgroundColor: 'var(--color-surface-elevated)',
-                    border: '1px solid var(--color-border)',
-                    borderRadius: 'var(--radius-sm)',
-                    fontSize: 'var(--text-micro)',
-                    fontWeight: 600,
-                  }}
-                >
-                  Run Now
-                </button>
-
-                <button
-                  onClick={() => handleToggleRule(rule.id)}
-                  style={{
-                    padding: 'var(--space-2) var(--space-4)',
-                    backgroundColor: rule.enabled ? 'var(--color-live)' : 'var(--color-surface-elevated)',
-                    color: rule.enabled ? 'var(--color-live-text)' : 'var(--color-text-primary)',
-                    borderRadius: 'var(--radius-sm)',
-                    fontSize: 'var(--text-small)',
-                    fontWeight: 700,
-                    border: '1px solid var(--color-border)',
-                  }}
-                >
-                  {rule.enabled ? 'ENABLED' : 'DISABLED'}
-                </button>
-
-                <button
-                  onClick={() => handleDeleteRule(rule.id)}
-                  style={{
-                    padding: 'var(--space-2)',
-                    color: 'var(--color-text-muted)',
-                    fontSize: 'var(--text-small)',
-                  }}
-                  title="Delete Rule"
-                >
-                  Delete
-                </button>
-              </div>
-            </div>
-          ))}
+        <div className="ws-transport">
+          <button
+            type="button"
+            className="ws-primary-action"
+            onClick={() => setShowAddModal(true)}
+          >
+            + Create Pipeline Rule
+          </button>
         </div>
-      </section>
+      </div>
 
-      {/* Execution History Log */}
-      <section
+      {/* Pipeline Flow Rules List */}
+      <div
         style={{
-          backgroundColor: 'var(--color-surface)',
-          border: '1px solid var(--color-border)',
-          borderRadius: 'var(--radius-md)',
-          padding: 'var(--space-4)',
+          border: '1px solid var(--ws-line)',
+          borderRadius: '7px',
+          background: 'var(--ws-panel)',
           display: 'flex',
           flexDirection: 'column',
-          gap: 'var(--space-3)',
+          overflow: 'hidden',
+          minHeight: 0,
         }}
       >
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <h2 style={{ fontSize: 'var(--text-body)', fontWeight: 600, margin: 0 }}>
-            Automation Execution History
-          </h2>
-          <span style={{ fontSize: 'var(--text-micro)', color: 'var(--color-text-muted)' }}>
-            Showing recent triggers
-          </span>
+        <div className="ws-section-head">
+          <h2>Active Automation Pipelines ({rules.length})</h2>
+          <span>Visual Event Flow (EVENT → CONDITION → ACTION → RESULT)</span>
         </div>
 
-        {logs.length === 0 ? (
-          <div style={{ color: 'var(--color-text-muted)', fontSize: 'var(--text-small)', fontStyle: 'italic', padding: 'var(--space-2)' }}>
-            No automation events recorded yet. Click "Run Now" on any rule to execute an action.
-          </div>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)', maxHeight: '200px', overflowY: 'auto' }}>
-            {logs.map((log) => (
-              <div
-                key={log.id}
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  padding: 'var(--space-2) var(--space-3)',
-                  backgroundColor: 'var(--color-surface-elevated)',
-                  borderRadius: 'var(--radius-sm)',
-                  fontSize: 'var(--text-small)',
-                }}
+        <div style={{ padding: '14px', overflowY: 'auto', flex: 1 }}>
+          {rules.length === 0 ? (
+            <div className="ws-empty">
+              <div>
+                <strong>No Automation Pipelines Configured</strong>
+                <p>Click "Create Pipeline Rule" to automate broadcast start/stop, recordings, or silence failover.</p>
+              </div>
+            </div>
+          ) : (
+            rules.map((rule) => {
+              const triggerEvent =
+                rule.trigger.type === 'EVENT'
+                  ? rule.trigger.eventName || 'event.received'
+                  : `INTERVAL (${rule.trigger.intervalSeconds || 60}s)`;
+
+              const conditionText = rule.trigger.eventCondition
+                ? `${rule.trigger.eventCondition.key} == "${rule.trigger.eventCondition.value}"`
+                : 'True (Any payload)';
+
+              const actionName = rule.action.type;
+              const resultTarget = 'Broadcast Control API';
+
+              return (
+                <div key={rule.id} className="ws-flow-card">
+                  {/* Top Meta */}
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span className="ws-badge" data-variant={rule.enabled ? 'live' : 'neutral'}>
+                        {rule.enabled ? 'PIPELINE ACTIVE' : 'DISABLED'}
+                      </span>
+                      <strong style={{ fontSize: '13px', color: 'var(--ws-text)' }}>
+                        {rule.name}
+                      </strong>
+                    </div>
+
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <span style={{ fontSize: '10px', color: 'var(--ws-subtle)', fontFamily: 'var(--font-mono)', marginRight: '6px' }}>
+                        Fired {rule.triggerCount} time(s)
+                      </span>
+                      <button
+                        type="button"
+                        className="ws-mini-action"
+                        onClick={() => handleRunNow(rule)}
+                        title="Simulate immediate pipeline trigger"
+                      >
+                        Run Now
+                      </button>
+                      <button
+                        type="button"
+                        className="ws-mini-action"
+                        style={{
+                          borderColor: rule.enabled ? 'var(--ws-line)' : 'var(--ws-live)',
+                          color: rule.enabled ? 'var(--ws-muted)' : 'var(--ws-live)',
+                        }}
+                        onClick={() => handleToggleRule(rule.id)}
+                      >
+                        {rule.enabled ? 'Disable' : 'Enable'}
+                      </button>
+                      <button
+                        type="button"
+                        className="ws-mini-action"
+                        style={{ color: 'var(--ws-danger)' }}
+                        onClick={() => handleDeleteRule(rule.id)}
+                        title="Delete rule"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  </div>
+
+                  <p style={{ margin: '4px 0 0 0', fontSize: '11px', color: 'var(--ws-muted)' }}>
+                    {rule.description}
+                  </p>
+
+                  {/* Visual Node Pipeline (Task 14) */}
+                  <div className="ws-flow-pipeline">
+                    <div className="ws-flow-node">
+                      <span className="ws-flow-node-type">1. EVENT</span>
+                      <span className="ws-flow-node-val">{triggerEvent}</span>
+                    </div>
+
+                    <span className="ws-flow-arrow">→</span>
+
+                    <div className="ws-flow-node">
+                      <span className="ws-flow-node-type">2. CONDITION</span>
+                      <span className="ws-flow-node-val">{conditionText}</span>
+                    </div>
+
+                    <span className="ws-flow-arrow">→</span>
+
+                    <div className="ws-flow-node" style={{ borderColor: 'color-mix(in srgb, var(--ws-live) 40%, var(--ws-line))' }}>
+                      <span className="ws-flow-node-type" style={{ color: 'var(--ws-live)' }}>3. ACTION</span>
+                      <span className="ws-flow-node-val" style={{ color: 'var(--ws-live)' }}>{actionName}</span>
+                    </div>
+
+                    <span className="ws-flow-arrow">→</span>
+
+                    <div className="ws-flow-node">
+                      <span className="ws-flow-node-type">4. RESULT</span>
+                      <span className="ws-flow-node-val">{resultTarget}</span>
+                    </div>
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+      </div>
+
+      {/* Execution Audit Log Stream */}
+      <div
+        style={{
+          border: '1px solid var(--ws-line)',
+          borderRadius: '7px',
+          background: 'var(--ws-panel)',
+          display: 'flex',
+          flexDirection: 'column',
+          overflow: 'hidden',
+          minHeight: 0,
+        }}
+      >
+        <div className="ws-section-head">
+          <h2>Automation Execution Audit Logs ({logs.length})</h2>
+          <span>Deterministic Dispatch History</span>
+        </div>
+
+        <div style={{ overflow: 'auto', flex: 1 }}>
+          {logs.length === 0 ? (
+            <div className="ws-empty" style={{ minHeight: '80px' }}>
+              <div>
+                <strong>No Automation Triggers Logged Yet</strong>
+                <p>Logs will automatically append here when automation events execute.</p>
+              </div>
+            </div>
+          ) : (
+            <table className="ws-table">
+              <thead>
+                <tr>
+                  <th style={{ width: '130px' }}>Timestamp</th>
+                  <th style={{ width: '200px' }}>Pipeline Rule</th>
+                  <th style={{ width: '100px' }}>Status</th>
+                  <th>Execution Trace / Payload Details</th>
+                </tr>
+              </thead>
+              <tbody>
+                {logs.slice(0, 30).map((log) => (
+                  <tr key={log.id}>
+                    <td style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--ws-subtle)' }}>
+                      {new Date(log.timestamp).toLocaleTimeString()}
+                    </td>
+                    <td style={{ fontWeight: 650 }}>{log.ruleName}</td>
+                    <td>
+                      <span
+                        className="ws-badge"
+                        data-variant={log.status === 'SUCCESS' ? 'live' : 'danger'}
+                      >
+                        {log.status}
+                      </span>
+                    </td>
+                    <td style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--ws-muted)' }}>
+                      {log.details}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+
+      {/* Add Custom Rule Modal */}
+      {showAddModal && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.7)',
+            display: 'grid',
+            placeItems: 'center',
+            zIndex: 1000,
+          }}
+        >
+          <div
+            style={{
+              width: 'min(500px, 92vw)',
+              background: 'var(--ws-panel)',
+              border: '1px solid var(--ws-line)',
+              borderRadius: '8px',
+              padding: '18px',
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+              <h3 style={{ margin: 0, fontSize: '14px', fontWeight: 760 }}>Create Automation Rule</h3>
+              <button
+                type="button"
+                className="ws-mini-action"
+                onClick={() => setShowAddModal(false)}
               >
-                <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center' }}>
-                  <span
-                    style={{
-                      width: '6px',
-                      height: '6px',
-                      borderRadius: '50%',
-                      backgroundColor: log.status === 'SUCCESS' ? 'var(--color-live)' : 'var(--color-error)',
-                    }}
-                  />
-                  <span style={{ fontWeight: 600, color: 'var(--color-text-primary)' }}>{log.ruleName}</span>
-                  <span style={{ color: 'var(--color-text-secondary)', fontSize: 'var(--text-micro)' }}>{log.details}</span>
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateRule} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <div>
+                <label className="ws-form-label">Rule Name</label>
+                <input
+                  type="text"
+                  className="ws-input"
+                  style={{ width: '100%' }}
+                  placeholder="e.g. Silence Auto-Failover"
+                  value={newRuleName}
+                  onChange={(e) => setNewRuleName(e.target.value)}
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="ws-form-label">Description</label>
+                <input
+                  type="text"
+                  className="ws-input"
+                  style={{ width: '100%' }}
+                  placeholder="e.g. Automatically start standby playlist when silence exceeds threshold"
+                  value={newRuleDesc}
+                  onChange={(e) => setNewRuleDesc(e.target.value)}
+                />
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                <div>
+                  <label className="ws-form-label">1. Event Trigger</label>
+                  <select
+                    className="ws-select"
+                    style={{ width: '100%' }}
+                    value={newEventName}
+                    onChange={(e) => setNewEventName(e.target.value)}
+                  >
+                    <option value="broadcast.status.changed">broadcast.status.changed</option>
+                    <option value="audio.level.changed">audio.level.changed</option>
+                    <option value="audio.device.changed">audio.device.changed</option>
+                    <option value="transcript.segment.created">transcript.segment.created</option>
+                  </select>
                 </div>
 
-                <span className="font-mono" style={{ color: 'var(--color-text-muted)', fontSize: 'var(--text-micro)' }}>
-                  {new Date(log.timestamp).toLocaleTimeString('id-ID')}
-                </span>
+                <div>
+                  <label className="ws-form-label">2. Condition Match</label>
+                  <input
+                    type="text"
+                    className="ws-input"
+                    style={{ width: '100%' }}
+                    placeholder="state=CONNECTED"
+                    value={`${newConditionKey}=${newConditionValue}`}
+                    onChange={(e) => {
+                      const [k, v] = e.target.value.split('=');
+                      setNewConditionKey(k || 'state');
+                      setNewConditionValue(v || 'CONNECTED');
+                    }}
+                  />
+                </div>
               </div>
-            ))}
+
+              <div>
+                <label className="ws-form-label">3. Target Action</label>
+                <select
+                  className="ws-select"
+                  style={{ width: '100%' }}
+                  value={newActionType}
+                  onChange={(e) => setNewActionType(e.target.value)}
+                >
+                  <option value="START_RECORD">START_RECORD (Capture to archive)</option>
+                  <option value="STOP_RECORD">STOP_RECORD (End recording)</option>
+                  <option value="START_BROADCAST">START_BROADCAST (Go on air)</option>
+                  <option value="STOP_BROADCAST">STOP_BROADCAST (Disconnect stream)</option>
+                  <option value="PLAY_DECK">PLAY_DECK (Start playback)</option>
+                  <option value="PAUSE_DECK">PAUSE_DECK (Pause playback)</option>
+                  <option value="STOP_DECK">STOP_DECK (Stop playback)</option>
+                  <option value="NEXT_TRACK">NEXT_TRACK (Advance queue)</option>
+                  <option value="TRANSITION_DECK">TRANSITION_DECK (Crossfade transition)</option>
+                  <option value="SET_MUTE">SET_MUTE (Toggle mute channel)</option>
+                  <option value="PLAY_TONE">PLAY_TONE (Trigger cue chime)</option>
+                </select>
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '14px' }}>
+                <button
+                  type="button"
+                  className="ws-secondary-action"
+                  onClick={() => setShowAddModal(false)}
+                >
+                  Cancel
+                </button>
+                <button type="submit" className="ws-primary-action">
+                  Deploy Pipeline
+                </button>
+              </div>
+            </form>
           </div>
-        )}
-      </section>
-    </div>
+        </div>
+      )}
+
+      {toastMessage && <div className="ws-toast">{toastMessage}</div>}
+    </section>
   );
 };

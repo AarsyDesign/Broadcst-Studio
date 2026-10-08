@@ -21,12 +21,13 @@ Any failure or uncaught exception inside a plugin, automation macro, AI agent, o
 
 Plugins belong to one of the following distinct categories:
 
-1. `audio_effect`: DSP nodes modifying or monitoring audio samples (e.g. compressors, duckers, voice levelers).
+1. `audio_effect`: Audio processing nodes modifying or monitoring audio samples (e.g. compressors, duckers, voice levelers).
 2. `audio_source`: Generators or players feeding samples into mixer channels (e.g. soundboard, file players).
 3. `output`: Broadcast stream transmitters (e.g. SHOUTcast v1/v2, Icecast, WebRTC).
 4. `metadata`: Track title, artist, and chapter injectors.
 5. `automation`: Event listeners and scheduled broadcast actions.
-6. `utility`: Telemetry analyzers, stream loggers, and diagnostics.
+6. `transcript`: Speech recognition providers and subtitle generators.
+7. `utility`: Telemetry analyzers, stream loggers, and diagnostics.
 
 ### Plugin Manifest
 

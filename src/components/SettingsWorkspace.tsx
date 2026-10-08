@@ -5,6 +5,20 @@ import { stationProfileManager } from '../services/profile/stationProfileManager
 import { StationProfile } from '../services/profile/types';
 import { AudioCodecType, CODEC_PROFILES } from '../types/codecs';
 import { ShoutcastConfig, TrackMetadata } from '../types/broadcast';
+import { controlApi } from '../services/controlApi';
+import { recoveryManager, SystemHealthStatus } from '../services/recovery/recoveryManager';
+import { historyService } from '../services/history/historyService';
+import { OperationAuditLogItem } from '../services/history/types';
+import { recorderService } from '../services/recorderService';
+
+type SettingsSection =
+  | 'audio'
+  | 'broadcast'
+  | 'station'
+  | 'recording'
+  | 'devices'
+  | 'operator'
+  | 'system';
 
 interface SettingsWorkspaceProps {
   theme?: 'dark' | 'light';
@@ -15,6 +29,7 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
   theme = 'dark',
   onSetTheme,
 }) => {
+  const [activeSection, setActiveSection] = useState<SettingsSection>('audio');
   const [profiles, setProfiles] = useState<StationProfile[]>(stationProfileManager.getProfiles());
   const [activeProfile, setActiveProfile] = useState<StationProfile>(stationProfileManager.getActiveProfile());
 
@@ -26,11 +41,18 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
   const [selectedCodec, setSelectedCodec] = useState<AudioCodecType>(activeProfile.defaultCodec || 'MP3');
   const [selectedBitrate, setSelectedBitrate] = useState<number>(activeProfile.defaultBitrate || 128);
 
-  const [saveStatus, setSaveStatus] = useState<string>('');
-  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [showCreateProfileModal, setShowCreateProfileModal] = useState(false);
   const [newProfileName, setNewProfileName] = useState('');
   const [newProfileCallsign, setNewProfileCallsign] = useState('');
   const [newProfileGenre, setNewProfileGenre] = useState('Talk & Music');
+
+  const [auditLogs, setAuditLogs] = useState<OperationAuditLogItem[]>(historyService.getAuditLogs());
+  const [auditSearch, setAuditSearch] = useState('');
+  const [recoveryStatus, setRecoveryStatus] = useState<SystemHealthStatus>(recoveryManager.getStatus());
+  const [lastRecoveryMsg, setLastRecoveryMsg] = useState(recoveryManager.getLastResult()?.message || '');
+  const [recoveryCount, setRecoveryCount] = useState(recoveryManager.getRecoveryCount());
+  const [isRecovering, setIsRecovering] = useState(false);
 
   useEffect(() => {
     const unsub = stationProfileManager.subscribe((list, active) => {
@@ -43,25 +65,38 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
       setSelectedBitrate(active.defaultBitrate);
     });
 
-    return () => unsub();
+    const unsubHistory = historyService.subscribe(() => {
+      setAuditLogs(historyService.getAuditLogs());
+    });
+
+    const unsubRecovery = recoveryManager.subscribe((st, res) => {
+      setRecoveryStatus(st);
+      if (res?.message) setLastRecoveryMsg(res.message);
+      setRecoveryCount(recoveryManager.getRecoveryCount());
+    });
+
+    return () => {
+      unsub();
+      unsubHistory();
+      unsubRecovery();
+    };
   }, []);
 
   const showToast = (msg: string) => {
-    setSaveStatus(msg);
-    setTimeout(() => setSaveStatus(''), 3000);
+    setToastMessage(msg);
+    setTimeout(() => setToastMessage(null), 3000);
   };
 
   const handleSwitchProfile = async (id: string) => {
     const success = await stationProfileManager.switchProfile(id);
     if (success) {
-      showToast(`Switched active station to: ${stationProfileManager.getActiveProfile().name}`);
+      showToast(`Switched active station: ${stationProfileManager.getActiveProfile().name}`);
     }
   };
 
-  const handleSaveActiveSettings = (e: React.FormEvent) => {
+  const handleSaveStation = (e: React.FormEvent) => {
     e.preventDefault();
 
-    // 1. Update active profile in manager
     const updatedProfile: Partial<StationProfile> = {
       name: activeProfile.name,
       callsign: activeProfile.callsign,
@@ -84,7 +119,6 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
 
     stationProfileManager.updateProfile(activeProfile.id, updatedProfile);
 
-    // 2. Update live engines
     shoutcastService.updateConfig({
       ...shoutcastCfg,
       bitrate: selectedBitrate,
@@ -95,14 +129,14 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
       bitrate: selectedBitrate,
     });
 
-    showToast('All station settings and server parameters saved.');
+    showToast('Configuration parameters applied.');
   };
 
   const handlePushMetadata = (e: React.FormEvent) => {
     e.preventDefault();
     shoutcastService.setMetadata(metadata);
     icecastService.setMetadata(metadata);
-    showToast(`Metadata pushed to all active streams: "${metadata.title}" by "${metadata.artist}"`);
+    showToast(`Metadata updated: "${metadata.title}" by "${metadata.artist}"`);
   };
 
   const handleCreateProfile = (e: React.FormEvent) => {
@@ -118,12 +152,21 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
       defaultBitrate: 128,
     });
 
-    stationProfileManager.switchProfile(created.id);
-    setShowCreateModal(false);
     setNewProfileName('');
     setNewProfileCallsign('');
-    showToast(`Created and switched to station: ${created.name}`);
+    setShowCreateProfileModal(false);
+    showToast(`Created station profile: ${created.name}`);
   };
+
+  const SECTIONS: { id: SettingsSection; label: string; kicker: string }[] = [
+    { id: 'audio', label: 'Audio Engine', kicker: 'AUDIO' },
+    { id: 'broadcast', label: 'Broadcast & Stream', kicker: 'BROADCAST' },
+    { id: 'station', label: 'Station Profile', kicker: 'STATION PROFILE' },
+    { id: 'recording', label: 'Recording & Archive', kicker: 'RECORDING' },
+    { id: 'devices', label: 'Hardware Devices', kicker: 'DEVICES' },
+    { id: 'operator', label: 'Operator & UI', kicker: 'OPERATOR' },
+    { id: 'system', label: 'System & Diagnostics', kicker: 'SYSTEM' },
+  ];
 
   const handleExportProfiles = () => {
     const json = stationProfileManager.exportProfilesJson();
@@ -131,28 +174,26 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `station-profiles-backup-${new Date().toISOString().substring(0, 10)}.json`;
+    a.download = `station_profiles_${new Date().toISOString().slice(0, 10)}.json`;
     a.click();
-    showToast('Station profiles exported to JSON');
+    URL.revokeObjectURL(url);
+    showToast('Station profiles exported');
   };
 
   const handleImportProfiles = () => {
     const input = document.createElement('input');
     input.type = 'file';
-    input.accept = '.json';
+    input.accept = 'application/json';
     input.onchange = (e: any) => {
       const file = e.target.files?.[0];
       if (file) {
         const reader = new FileReader();
-        reader.onload = (event) => {
-          const content = event.target?.result as string;
-          if (content) {
-            const success = stationProfileManager.importProfilesJson(content);
-            if (success) {
-              showToast('Station profiles imported successfully');
-            } else {
-              showToast('Failed to parse profile JSON');
-            }
+        reader.onload = (re) => {
+          const content = re.target?.result as string;
+          if (content && stationProfileManager.importProfilesJson(content)) {
+            showToast('Profiles imported successfully');
+          } else {
+            showToast('Failed to import profile JSON');
           }
         };
         reader.readAsText(file);
@@ -161,757 +202,823 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
     input.click();
   };
 
-  const codecProfile = CODEC_PROFILES[selectedCodec] || CODEC_PROFILES.MP3;
+  const handleDuplicateProfile = () => {
+    const copy = stationProfileManager.duplicateProfile(activeProfile.id);
+    if (copy) {
+      showToast(`Duplicated profile: ${copy.name}`);
+    }
+  };
+
+  const handleTriggerRecovery = async () => {
+    setIsRecovering(true);
+    showToast('Initiating hardware recovery...');
+    const res = await recoveryManager.recoverAudioHardware(undefined, undefined, 'SETTINGS_MANUAL_TRIGGER');
+    setIsRecovering(false);
+    showToast(res.message);
+  };
+
+  const handleExportAuditCsv = () => {
+    const csv = historyService.exportAuditCsv();
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `operations_audit_${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast('Audit log exported to CSV');
+  };
 
   return (
-    <div
-      style={{
-        flex: 1,
-        display: 'flex',
-        flexDirection: 'column',
-        padding: 'var(--space-6)',
-        gap: 'var(--space-4)',
-        backgroundColor: 'var(--color-bg)',
-        overflowY: 'auto',
-      }}
-    >
-      {/* Header */}
-      <header
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          backgroundColor: 'var(--color-surface)',
-          padding: 'var(--space-4)',
-          borderRadius: 'var(--radius-md)',
-          border: '1px solid var(--color-border)',
-        }}
-      >
+    <section className="ws-workspace" style={{ display: 'grid', gridTemplateRows: 'auto minmax(0, 1fr)', gap: '14px', height: '100%' }}>
+      {/* Command & Control Bar */}
+      <div className="ws-command-row">
         <div>
-          <h1 style={{ fontSize: 'var(--text-h2)', fontWeight: 700, margin: 0, textTransform: 'uppercase' }}>
-            Station Profiles & Transmission Settings
-          </h1>
-          <p style={{ fontSize: 'var(--text-micro)', color: 'var(--color-text-secondary)', marginTop: '2px' }}>
-            Manage multi-station configurations, SHOUTcast / Icecast servers, high-efficiency audio codecs, and stream metadata.
+          <div className="ws-kicker">System / Preferences</div>
+          <h1 className="ws-title">Station Configuration & Preferences</h1>
+          <p className="ws-subtitle">
+            Dense utility workspace for server protocols, audio bus headroom, codecs, security policies, and themes.
           </p>
         </div>
 
-        <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
-          <button
-            onClick={handleExportProfiles}
-            style={{
-              padding: 'var(--space-2) var(--space-3)',
-              borderRadius: 'var(--radius-sm)',
-              border: '1px solid var(--color-border)',
-              backgroundColor: 'var(--color-surface-elevated)',
-              color: 'var(--color-text-primary)',
-              fontSize: 'var(--text-small)',
-              cursor: 'pointer',
-            }}
-          >
-            Export Profiles
-          </button>
-          <button
-            onClick={handleImportProfiles}
-            style={{
-              padding: 'var(--space-2) var(--space-3)',
-              borderRadius: 'var(--radius-sm)',
-              border: '1px solid var(--color-border)',
-              backgroundColor: 'var(--color-surface-elevated)',
-              color: 'var(--color-text-primary)',
-              fontSize: 'var(--text-small)',
-              cursor: 'pointer',
-            }}
-          >
-            Import Profiles
+        <div className="ws-transport">
+          <button type="button" className="ws-primary-action" onClick={handleSaveStation}>
+            Save All Preferences
           </button>
         </div>
-      </header>
+      </div>
 
-      {/* Toast Alert */}
-      {saveStatus && (
-        <div
-          style={{
-            padding: 'var(--space-2) var(--space-4)',
-            backgroundColor: 'var(--color-surface-elevated)',
-            border: '1px solid var(--color-live)',
-            borderRadius: 'var(--radius-sm)',
-            color: 'var(--color-live)',
-            fontWeight: 600,
-            fontSize: 'var(--text-small)',
-          }}
-        >
-          {saveStatus}
-        </div>
-      )}
-
-      {/* Multi-Station Profile Bar */}
-      <section
-        style={{
-          backgroundColor: 'var(--color-surface)',
-          border: '1px solid var(--color-border)',
-          borderRadius: 'var(--radius-md)',
-          padding: 'var(--space-4)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-        }}
-      >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-4)' }}>
-          <div>
-            <div style={{ fontSize: 'var(--text-micro)', color: 'var(--color-text-secondary)', textTransform: 'uppercase' }}>
-              ACTIVE STATION PROFILE
-            </div>
-            <div style={{ fontSize: 'var(--text-h2)', fontWeight: 700, color: 'var(--color-live)' }}>
-              {activeProfile.name} ({activeProfile.callsign})
-            </div>
-            <div style={{ fontSize: 'var(--text-small)', color: 'var(--color-text-secondary)' }}>
-              {activeProfile.slogan} | Genre: {activeProfile.genre}
-            </div>
-          </div>
-        </div>
-
-        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
-          <select
-            value={activeProfile.id}
-            onChange={(e) => handleSwitchProfile(e.target.value)}
-            style={{
-              padding: 'var(--space-2) var(--space-4)',
-              backgroundColor: 'var(--color-bg)',
-              border: '1px solid var(--color-border)',
-              borderRadius: 'var(--radius-sm)',
-              color: 'var(--color-text-primary)',
-              fontSize: 'var(--text-body)',
-              fontWeight: 600,
-            }}
-          >
-            {profiles.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name} ({p.callsign})
-              </option>
-            ))}
-          </select>
-
-          <button
-            onClick={() => setShowCreateModal(true)}
-            style={{
-              padding: 'var(--space-2) var(--space-4)',
-              borderRadius: 'var(--radius-sm)',
-              border: 'none',
-              backgroundColor: 'var(--color-live)',
-              color: 'var(--color-live-text)',
-              fontWeight: 600,
-              fontSize: 'var(--text-small)',
-              cursor: 'pointer',
-            }}
-          >
-            + New Station
-          </button>
-        </div>
-      </section>
-
-      {/* Two Column Settings Body */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-4)' }}>
-        {/* Left Column: Server Transmission Parameters */}
-        <section
-          style={{
-            backgroundColor: 'var(--color-surface)',
-            border: '1px solid var(--color-border)',
-            borderRadius: 'var(--radius-md)',
-            padding: 'var(--space-4)',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 'var(--space-4)',
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <h2 style={{ fontSize: 'var(--text-body)', fontWeight: 700, margin: 0, textTransform: 'uppercase' }}>
-              Streaming Server Protocol
-            </h2>
-
-            {/* Protocol Switcher */}
-            <div
-              style={{
-                display: 'flex',
-                backgroundColor: 'var(--color-bg)',
-                borderRadius: 'var(--radius-sm)',
-                padding: '2px',
-                border: '1px solid var(--color-border)',
-              }}
+      {/* Main Settings Two-Column Layout */}
+      <div className="ws-settings-layout">
+        {/* Left Navigator */}
+        <nav className="ws-settings-nav" aria-label="Settings categories">
+          {SECTIONS.map((sec) => (
+            <button
+              key={sec.id}
+              type="button"
+              className="ws-settings-nav-btn"
+              data-active={activeSection === sec.id}
+              onClick={() => setActiveSection(sec.id)}
             >
-              <button
-                type="button"
-                onClick={() => setServerProtocol('shoutcast')}
-                style={{
-                  padding: 'var(--space-1) var(--space-3)',
-                  borderRadius: 'var(--radius-sm)',
-                  border: 'none',
-                  backgroundColor: serverProtocol === 'shoutcast' ? 'var(--color-surface-elevated)' : 'transparent',
-                  color: serverProtocol === 'shoutcast' ? 'var(--color-live)' : 'var(--color-text-secondary)',
-                  fontWeight: serverProtocol === 'shoutcast' ? 700 : 400,
-                  fontSize: 'var(--text-small)',
-                  cursor: 'pointer',
-                }}
-              >
-                SHOUTcast v1/v2
-              </button>
-              <button
-                type="button"
-                onClick={() => setServerProtocol('icecast')}
-                style={{
-                  padding: 'var(--space-1) var(--space-3)',
-                  borderRadius: 'var(--radius-sm)',
-                  border: 'none',
-                  backgroundColor: serverProtocol === 'icecast' ? 'var(--color-surface-elevated)' : 'transparent',
-                  color: serverProtocol === 'icecast' ? 'var(--color-live)' : 'var(--color-text-secondary)',
-                  fontWeight: serverProtocol === 'icecast' ? 700 : 400,
-                  fontSize: 'var(--text-small)',
-                  cursor: 'pointer',
-                }}
-              >
-                Icecast 2.x (HTTP SOURCE)
-              </button>
-            </div>
-          </div>
+              <div style={{ display: 'flex', flexDirection: 'column' }}>
+                <span style={{ fontSize: '8px', color: 'var(--ws-subtle)', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+                  {sec.kicker}
+                </span>
+                <span>{sec.label}</span>
+              </div>
+            </button>
+          ))}
+        </nav>
 
-          <form onSubmit={handleSaveActiveSettings} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-            {serverProtocol === 'shoutcast' ? (
-              <>
-                <div>
-                  <label style={{ display: 'block', fontSize: 'var(--text-micro)', color: 'var(--color-text-secondary)', marginBottom: '4px' }}>
-                    SHOUTCAST SERVER HOST / IP
-                  </label>
-                  <input
-                    type="text"
-                    value={shoutcastCfg.server}
-                    onChange={(e) => setShoutcastCfg({ ...shoutcastCfg, server: e.target.value })}
-                    style={{ width: '100%', boxSizing: 'border-box' }}
-                  />
+        {/* Right Settings Form Body */}
+        <div className="ws-settings-body">
+          {/* 1. STATION PROFILE */}
+          {activeSection === 'station' && (
+            <form onSubmit={handleSaveStation} style={{ maxWidth: '640px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                <h2 style={{ fontSize: '15px', fontWeight: 760, margin: 0 }}>Station Profiles & Identity</h2>
+                <div style={{ display: 'flex', gap: '6px' }}>
+                  <button
+                    type="button"
+                    className="ws-secondary-action"
+                    style={{ height: '28px', fontSize: '10px' }}
+                    onClick={handleDuplicateProfile}
+                    title="Duplicate active profile"
+                  >
+                    Duplicate
+                  </button>
+                  <button
+                    type="button"
+                    className="ws-secondary-action"
+                    style={{ height: '28px', fontSize: '10px' }}
+                    onClick={handleExportProfiles}
+                    title="Export profiles JSON"
+                  >
+                    Export JSON
+                  </button>
+                  <button
+                    type="button"
+                    className="ws-secondary-action"
+                    style={{ height: '28px', fontSize: '10px' }}
+                    onClick={handleImportProfiles}
+                    title="Import profiles JSON"
+                  >
+                    Import JSON
+                  </button>
+                  <button
+                    type="button"
+                    className="ws-secondary-action"
+                    style={{ height: '28px', fontSize: '10px' }}
+                    onClick={() => setShowCreateProfileModal(true)}
+                  >
+                    + New Profile
+                  </button>
                 </div>
-
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-3)' }}>
-                  <div>
-                    <label style={{ display: 'block', fontSize: 'var(--text-micro)', color: 'var(--color-text-secondary)', marginBottom: '4px' }}>
-                      PORT
-                    </label>
-                    <input
-                      type="number"
-                      value={shoutcastCfg.port}
-                      onChange={(e) => setShoutcastCfg({ ...shoutcastCfg, port: Number(e.target.value) })}
-                      style={{ width: '100%', boxSizing: 'border-box' }}
-                    />
-                  </div>
-
-                  <div>
-                    <label style={{ display: 'block', fontSize: 'var(--text-micro)', color: 'var(--color-text-secondary)', marginBottom: '4px' }}>
-                      STREAM ID
-                    </label>
-                    <input
-                      type="number"
-                      value={shoutcastCfg.streamId}
-                      onChange={(e) => setShoutcastCfg({ ...shoutcastCfg, streamId: Number(e.target.value) })}
-                      style={{ width: '100%', boxSizing: 'border-box' }}
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label style={{ display: 'block', fontSize: 'var(--text-micro)', color: 'var(--color-text-secondary)', marginBottom: '4px' }}>
-                    SOURCE PASSWORD
-                  </label>
-                  <input
-                    type="password"
-                    value={shoutcastCfg.password || ''}
-                    onChange={(e) => setShoutcastCfg({ ...shoutcastCfg, password: e.target.value })}
-                    placeholder="Enter encoder password..."
-                    style={{ width: '100%', boxSizing: 'border-box' }}
-                  />
-                </div>
-              </>
-            ) : (
-              <>
-                <div>
-                  <label style={{ display: 'block', fontSize: 'var(--text-micro)', color: 'var(--color-text-secondary)', marginBottom: '4px' }}>
-                    ICECAST SERVER HOST / IP
-                  </label>
-                  <input
-                    type="text"
-                    value={icecastCfg.server}
-                    onChange={(e) => setIcecastCfg({ ...icecastCfg, server: e.target.value })}
-                    style={{ width: '100%', boxSizing: 'border-box' }}
-                  />
-                </div>
-
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-3)' }}>
-                  <div>
-                    <label style={{ display: 'block', fontSize: 'var(--text-micro)', color: 'var(--color-text-secondary)', marginBottom: '4px' }}>
-                      PORT
-                    </label>
-                    <input
-                      type="number"
-                      value={icecastCfg.port}
-                      onChange={(e) => setIcecastCfg({ ...icecastCfg, port: Number(e.target.value) })}
-                      style={{ width: '100%', boxSizing: 'border-box' }}
-                    />
-                  </div>
-
-                  <div>
-                    <label style={{ display: 'block', fontSize: 'var(--text-micro)', color: 'var(--color-text-secondary)', marginBottom: '4px' }}>
-                      MOUNT POINT
-                    </label>
-                    <input
-                      type="text"
-                      value={icecastCfg.mountPoint}
-                      onChange={(e) => setIcecastCfg({ ...icecastCfg, mountPoint: e.target.value })}
-                      placeholder="/live"
-                      style={{ width: '100%', boxSizing: 'border-box' }}
-                    />
-                  </div>
-                </div>
-
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-3)' }}>
-                  <div>
-                    <label style={{ display: 'block', fontSize: 'var(--text-micro)', color: 'var(--color-text-secondary)', marginBottom: '4px' }}>
-                      SOURCE USERNAME
-                    </label>
-                    <input
-                      type="text"
-                      value={icecastCfg.username}
-                      onChange={(e) => setIcecastCfg({ ...icecastCfg, username: e.target.value })}
-                      style={{ width: '100%', boxSizing: 'border-box' }}
-                    />
-                  </div>
-
-                  <div>
-                    <label style={{ display: 'block', fontSize: 'var(--text-micro)', color: 'var(--color-text-secondary)', marginBottom: '4px' }}>
-                      SOURCE PASSWORD
-                    </label>
-                    <input
-                      type="password"
-                      value={icecastCfg.password}
-                      onChange={(e) => setIcecastCfg({ ...icecastCfg, password: e.target.value })}
-                      style={{ width: '100%', boxSizing: 'border-box' }}
-                    />
-                  </div>
-                </div>
-              </>
-            )}
-
-            {/* Audio Codec & Bitrate Section */}
-            <div style={{ borderTop: '1px solid var(--color-border)', paddingTop: 'var(--space-3)', marginTop: 'var(--space-2)' }}>
-              <div style={{ fontSize: 'var(--text-small)', fontWeight: 700, marginBottom: 'var(--space-2)' }}>
-                Audio Encoding Format & Codec
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 0.8fr', gap: 'var(--space-3)' }}>
-                <div>
-                  <label style={{ display: 'block', fontSize: 'var(--text-micro)', color: 'var(--color-text-secondary)', marginBottom: '4px' }}>
-                    CODEC ENGINE
-                  </label>
-                  <select
-                    value={selectedCodec}
-                    onChange={(e) => {
-                      const c = e.target.value as AudioCodecType;
-                      setSelectedCodec(c);
-                      setSelectedBitrate(CODEC_PROFILES[c].defaultBitrateKbps);
-                    }}
-                    style={{ width: '100%', boxSizing: 'border-box' }}
+              <div className="ws-form-group">
+                <label className="ws-form-label">Active Station Profile</label>
+                <select
+                  className="ws-select"
+                  style={{ width: '100%' }}
+                  value={activeProfile.id}
+                  onChange={(e) => handleSwitchProfile(e.target.value)}
+                >
+                  {profiles.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name} ({p.callsign})
+                    </option>
+                  ))}
+                </select>
+                <div className="ws-form-help">Switching profile switches transmission server addresses and default metadata.</div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: '12px' }}>
+                <div className="ws-form-group">
+                  <label className="ws-form-label">Station Name</label>
+                  <input
+                    type="text"
+                    className="ws-input"
+                    style={{ width: '100%' }}
+                    value={activeProfile.name}
+                    onChange={(e) => setActiveProfile({ ...activeProfile, name: e.target.value })}
+                    required
+                  />
+                </div>
+
+                <div className="ws-form-group">
+                  <label className="ws-form-label">Callsign</label>
+                  <input
+                    type="text"
+                    className="ws-input"
+                    style={{ width: '100%' }}
+                    value={activeProfile.callsign}
+                    onChange={(e) => setActiveProfile({ ...activeProfile, callsign: e.target.value })}
+                  />
+                </div>
+              </div>
+
+              <div className="ws-form-group">
+                <label className="ws-form-label">Slogan / Tagline</label>
+                <input
+                  type="text"
+                  className="ws-input"
+                  style={{ width: '100%' }}
+                  value={activeProfile.slogan}
+                  onChange={(e) => setActiveProfile({ ...activeProfile, slogan: e.target.value })}
+                />
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <div className="ws-form-group">
+                  <label className="ws-form-label">Genre</label>
+                  <input
+                    type="text"
+                    className="ws-input"
+                    style={{ width: '100%' }}
+                    value={activeProfile.genre}
+                    onChange={(e) => setActiveProfile({ ...activeProfile, genre: e.target.value })}
+                  />
+                </div>
+
+                <div className="ws-form-group">
+                  <label className="ws-form-label">Website URL</label>
+                  <input
+                    type="text"
+                    className="ws-input"
+                    style={{ width: '100%' }}
+                    value={activeProfile.website}
+                    onChange={(e) => setActiveProfile({ ...activeProfile, website: e.target.value })}
+                  />
+                </div>
+              </div>
+            </form>
+          )}
+
+          {/* 2. TRANSMISSION (SHOUTCAST & ICECAST) */}
+          {activeSection === 'broadcast' && (
+            <form onSubmit={handleSaveStation} style={{ maxWidth: '640px' }}>
+              <h2 style={{ fontSize: '15px', fontWeight: 760, marginBottom: '16px' }}>Streaming Transmission Protocols</h2>
+
+              <div className="ws-form-group">
+                <label className="ws-form-label">Primary Stream Protocol</label>
+                <div className="ws-tabs">
+                  <button
+                    type="button"
+                    className="ws-tab-btn"
+                    data-active={serverProtocol === 'shoutcast'}
+                    onClick={() => setServerProtocol('shoutcast')}
                   >
-                    <option value="MP3">MPEG Layer-3 (MP3)</option>
-                    <option value="AAC_LC">Advanced Audio Coding (AAC-LC)</option>
-                    <option value="HE_AAC">High-Efficiency AAC (aacPlus v2)</option>
-                    <option value="OPUS">Opus Audio (Ogg Opus - Low Latency)</option>
-                    <option value="OGG_VORBIS">Ogg Vorbis</option>
-                    <option value="FLAC">FLAC (Lossless Studio Master)</option>
+                    SHOUTcast v1 / v2 DNAS
+                  </button>
+                  <button
+                    type="button"
+                    className="ws-tab-btn"
+                    data-active={serverProtocol === 'icecast'}
+                    onClick={() => setServerProtocol('icecast')}
+                  >
+                    Icecast v2.4+ / KH Mount
+                  </button>
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '12px' }}>
+                <div className="ws-form-group">
+                  <label className="ws-form-label">Server Host / IP</label>
+                  <input
+                    type="text"
+                    className="ws-input"
+                    style={{ width: '100%' }}
+                    value={serverProtocol === 'shoutcast' ? shoutcastCfg.server : icecastCfg.server}
+                    onChange={(e) => {
+                      if (serverProtocol === 'shoutcast') {
+                        setShoutcastCfg({ ...shoutcastCfg, server: e.target.value });
+                      } else {
+                        setIcecastCfg({ ...icecastCfg, server: e.target.value });
+                      }
+                    }}
+                    required
+                  />
+                </div>
+
+                <div className="ws-form-group">
+                  <label className="ws-form-label">Port</label>
+                  <input
+                    type="number"
+                    className="ws-input"
+                    style={{ width: '100%' }}
+                    value={serverProtocol === 'shoutcast' ? shoutcastCfg.port : icecastCfg.port}
+                    onChange={(e) => {
+                      const p = parseInt(e.target.value, 10) || 8000;
+                      if (serverProtocol === 'shoutcast') {
+                        setShoutcastCfg({ ...shoutcastCfg, port: p });
+                      } else {
+                        setIcecastCfg({ ...icecastCfg, port: p });
+                      }
+                    }}
+                    required
+                  />
+                </div>
+              </div>
+
+              {serverProtocol === 'shoutcast' ? (
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                  <div className="ws-form-group">
+                    <label className="ws-form-label">Stream ID / Mount Number</label>
+                    <input
+                      type="number"
+                      className="ws-input"
+                      style={{ width: '100%' }}
+                      value={shoutcastCfg.streamId}
+                      onChange={(e) => setShoutcastCfg({ ...shoutcastCfg, streamId: parseInt(e.target.value, 10) || 1 })}
+                    />
+                  </div>
+
+                  <div className="ws-form-group">
+                    <label className="ws-form-label">Source Password</label>
+                    <input
+                      type="password"
+                      className="ws-input"
+                      style={{ width: '100%' }}
+                      placeholder="••••••••"
+                      value={shoutcastCfg.password || ''}
+                      onChange={(e) => setShoutcastCfg({ ...shoutcastCfg, password: e.target.value })}
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr 1fr', gap: '12px' }}>
+                  <div className="ws-form-group">
+                    <label className="ws-form-label">Mount Point</label>
+                    <input
+                      type="text"
+                      className="ws-input"
+                      style={{ width: '100%' }}
+                      value={icecastCfg.mountPoint}
+                      onChange={(e) => setIcecastCfg({ ...icecastCfg, mountPoint: e.target.value })}
+                    />
+                  </div>
+
+                  <div className="ws-form-group">
+                    <label className="ws-form-label">Username</label>
+                    <input
+                      type="text"
+                      className="ws-input"
+                      style={{ width: '100%' }}
+                      value={icecastCfg.username}
+                      onChange={(e) => setIcecastCfg({ ...icecastCfg, username: e.target.value })}
+                    />
+                  </div>
+
+                  <div className="ws-form-group">
+                    <label className="ws-form-label">Password</label>
+                    <input
+                      type="password"
+                      className="ws-input"
+                      style={{ width: '100%' }}
+                      placeholder="••••••••"
+                      value={icecastCfg.password}
+                      onChange={(e) => setIcecastCfg({ ...icecastCfg, password: e.target.value })}
+                    />
+                  </div>
+                </div>
+              )}
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <div className="ws-form-group">
+                  <label className="ws-form-label">Audio Codec</label>
+                  <select
+                    className="ws-select"
+                    style={{ width: '100%' }}
+                    value={selectedCodec}
+                    onChange={(e) => setSelectedCodec(e.target.value as AudioCodecType)}
+                  >
+                    {Object.keys(CODEC_PROFILES).map((c) => (
+                      <option key={c} value={c}>
+                        {c} ({CODEC_PROFILES[c as AudioCodecType].description})
+                      </option>
+                    ))}
                   </select>
                 </div>
 
-                <div>
-                  <label style={{ display: 'block', fontSize: 'var(--text-micro)', color: 'var(--color-text-secondary)', marginBottom: '4px' }}>
-                    TARGET BITRATE
-                  </label>
+                <div className="ws-form-group">
+                  <label className="ws-form-label">Encoding Bitrate (kbps)</label>
                   <select
+                    className="ws-select"
+                    style={{ width: '100%' }}
                     value={selectedBitrate}
-                    onChange={(e) => setSelectedBitrate(Number(e.target.value))}
-                    style={{ width: '100%', boxSizing: 'border-box' }}
+                    onChange={(e) => setSelectedBitrate(parseInt(e.target.value, 10))}
                   >
-                    {codecProfile.supportedBitrates.map((b) => (
+                    {[64, 96, 128, 160, 192, 256, 320].map((b) => (
                       <option key={b} value={b}>
-                        {b === 1411 ? 'Lossless (1411 kbps)' : `${b} kbps`}
+                        {b} kbps
                       </option>
                     ))}
                   </select>
                 </div>
               </div>
 
-              <p style={{ fontSize: 'var(--text-micro)', color: 'var(--color-text-muted)', marginTop: '6px' }}>
-                {codecProfile.description} (MIME: {codecProfile.mimeType})
-              </p>
-            </div>
-
-            <button
-              type="submit"
-              style={{
-                marginTop: 'var(--space-2)',
-                padding: 'var(--space-2) var(--space-4)',
-                backgroundColor: 'var(--color-live)',
-                color: 'var(--color-live-text)',
-                border: 'none',
-                borderRadius: 'var(--radius-sm)',
-                fontWeight: 600,
-                fontSize: 'var(--text-small)',
-                cursor: 'pointer',
-              }}
-            >
-              Save Transmission Settings
-            </button>
-          </form>
-        </section>
-
-        {/* Right Column: Station Identity & Live Metadata */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
-          {/* Station Identity Section */}
-          <section
-            style={{
-              backgroundColor: 'var(--color-surface)',
-              border: '1px solid var(--color-border)',
-              borderRadius: 'var(--radius-md)',
-              padding: 'var(--space-4)',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 'var(--space-3)',
-            }}
-          >
-            <h2 style={{ fontSize: 'var(--text-body)', fontWeight: 700, margin: 0, textTransform: 'uppercase' }}>
-              Station Branding & Identity
-            </h2>
-
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-3)' }}>
-              <div>
-                <label style={{ display: 'block', fontSize: 'var(--text-micro)', color: 'var(--color-text-secondary)', marginBottom: '4px' }}>
-                  STATION NAME
-                </label>
-                <input
-                  type="text"
-                  value={activeProfile.name}
-                  onChange={(e) => stationProfileManager.updateProfile(activeProfile.id, { name: e.target.value })}
-                  style={{ width: '100%', boxSizing: 'border-box' }}
-                />
-              </div>
-
-              <div>
-                <label style={{ display: 'block', fontSize: 'var(--text-micro)', color: 'var(--color-text-secondary)', marginBottom: '4px' }}>
-                  CALLSIGN / FREQUENCY
-                </label>
-                <input
-                  type="text"
-                  value={activeProfile.callsign}
-                  onChange={(e) => stationProfileManager.updateProfile(activeProfile.id, { callsign: e.target.value })}
-                  style={{ width: '100%', boxSizing: 'border-box' }}
-                />
-              </div>
-            </div>
-
-            <div>
-              <label style={{ display: 'block', fontSize: 'var(--text-micro)', color: 'var(--color-text-secondary)', marginBottom: '4px' }}>
-                STATION SLOGAN / MOTTO
-              </label>
-              <input
-                type="text"
-                value={activeProfile.slogan}
-                onChange={(e) => stationProfileManager.updateProfile(activeProfile.id, { slogan: e.target.value })}
-                style={{ width: '100%', boxSizing: 'border-box' }}
-              />
-            </div>
-
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-3)' }}>
-              <div>
-                <label style={{ display: 'block', fontSize: 'var(--text-micro)', color: 'var(--color-text-secondary)', marginBottom: '4px' }}>
-                  PRIMARY GENRE
-                </label>
-                <input
-                  type="text"
-                  value={activeProfile.genre}
-                  onChange={(e) => stationProfileManager.updateProfile(activeProfile.id, { genre: e.target.value })}
-                  style={{ width: '100%', boxSizing: 'border-box' }}
-                />
-              </div>
-
-              <div>
-                <label style={{ display: 'block', fontSize: 'var(--text-micro)', color: 'var(--color-text-secondary)', marginBottom: '4px' }}>
-                  STATION WEBSITE URL
-                </label>
-                <input
-                  type="text"
-                  value={activeProfile.website}
-                  onChange={(e) => stationProfileManager.updateProfile(activeProfile.id, { website: e.target.value })}
-                  style={{ width: '100%', boxSizing: 'border-box' }}
-                />
-              </div>
-            </div>
-          </section>
-
-          {/* Real-time Metadata Section */}
-          <section
-            style={{
-              backgroundColor: 'var(--color-surface)',
-              border: '1px solid var(--color-border)',
-              borderRadius: 'var(--radius-md)',
-              padding: 'var(--space-4)',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 'var(--space-3)',
-            }}
-          >
-            <h2 style={{ fontSize: 'var(--text-body)', fontWeight: 700, margin: 0, textTransform: 'uppercase' }}>
-              Live On-Air Metadata Injection
-            </h2>
-
-            <form onSubmit={handlePushMetadata} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-              <div>
-                <label style={{ display: 'block', fontSize: 'var(--text-micro)', color: 'var(--color-text-secondary)', marginBottom: '4px' }}>
-                  NOW PLAYING TRACK / PROGRAM TITLE
-                </label>
-                <input
-                  type="text"
-                  value={metadata.title}
-                  onChange={(e) => setMetadata({ ...metadata, title: e.target.value })}
-                  style={{ width: '100%', boxSizing: 'border-box' }}
-                />
-              </div>
-
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-3)' }}>
-                <div>
-                  <label style={{ display: 'block', fontSize: 'var(--text-micro)', color: 'var(--color-text-secondary)', marginBottom: '4px' }}>
-                    ARTIST / PRESENTER
-                  </label>
-                  <input
-                    type="text"
-                    value={metadata.artist}
-                    onChange={(e) => setMetadata({ ...metadata, artist: e.target.value })}
-                    style={{ width: '100%', boxSizing: 'border-box' }}
-                  />
+              {/* Manual ICY metadata tester */}
+              <div style={{ borderTop: '1px solid var(--ws-line)', paddingTop: '16px', marginTop: '16px' }}>
+                <h3 style={{ fontSize: '13px', fontWeight: 700, margin: '0 0 10px 0' }}>Manual ICY Now-Playing Override</h3>
+                <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1.2fr auto', gap: '8px', alignItems: 'end' }}>
+                  <div>
+                    <label className="ws-form-label">Track Title</label>
+                    <input
+                      type="text"
+                      className="ws-input"
+                      style={{ width: '100%' }}
+                      value={metadata.title}
+                      onChange={(e) => setMetadata({ ...metadata, title: e.target.value })}
+                    />
+                  </div>
+                  <div>
+                    <label className="ws-form-label">Artist / Speaker</label>
+                    <input
+                      type="text"
+                      className="ws-input"
+                      style={{ width: '100%' }}
+                      value={metadata.artist}
+                      onChange={(e) => setMetadata({ ...metadata, artist: e.target.value })}
+                    />
+                  </div>
+                  <button type="button" className="ws-secondary-action" style={{ height: '30px' }} onClick={handlePushMetadata}>
+                    Push
+                  </button>
                 </div>
+              </div>
+            </form>
+          )}
 
+          {/* 3. AUDIO ENGINE */}
+          {activeSection === 'audio' && (
+            <div style={{ maxWidth: '640px' }}>
+              <h2 style={{ fontSize: '15px', fontWeight: 760, marginBottom: '16px' }}>Audio Engine Architecture</h2>
+
+              <div className="ws-banner" data-type="notice" style={{ marginBottom: '16px' }}>
                 <div>
-                  <label style={{ display: 'block', fontSize: 'var(--text-micro)', color: 'var(--color-text-secondary)', marginBottom: '4px' }}>
-                    ALBUM / CATEGORY
-                  </label>
-                  <input
-                    type="text"
-                    value={metadata.album || ''}
-                    onChange={(e) => setMetadata({ ...metadata, album: e.target.value })}
-                    placeholder="e.g. Live Broadcast"
-                    style={{ width: '100%', boxSizing: 'border-box' }}
-                  />
+                  <strong style={{ display: 'block', color: 'var(--ws-text)' }}>Runtime Audio Pipeline</strong>
+                  <span>Web Audio API active in browser mode. Low-latency WASAPI / Rust engine active in Tauri native build.</span>
                 </div>
               </div>
 
-              <button
-                type="submit"
+              <div className="ws-form-group">
+                <label className="ws-form-label">Master True-Peak Limiter Ceiling</label>
+                <select className="ws-select" style={{ width: '100%' }} defaultValue="-0.5">
+                  <option value="-0.1">-0.1 dBFS (Hot / Peak Safe)</option>
+                  <option value="-0.5">-0.5 dBFS (Recommended Broadcast)</option>
+                  <option value="-1.0">-1.0 dBFS (EBU R128 Compliant)</option>
+                </select>
+              </div>
+
+              <div className="ws-form-group">
+                <label className="ws-form-label">Nominal Loudness Target</label>
+                <select className="ws-select" style={{ width: '100%' }} defaultValue="-14">
+                  <option value="-14">-14 LUFS (Online Streaming / Podcast)</option>
+                  <option value="-18">-18 LUFS (Digital Radio)</option>
+                  <option value="-23">-23 LUFS (EBU R128 Broadcast Standard)</option>
+                </select>
+              </div>
+
+              <div className="ws-form-group">
+                <label className="ws-form-label">Buffer Latency Mode</label>
+                <select className="ws-select" style={{ width: '100%' }} defaultValue="low">
+                  <option value="ultra">Ultra-Low Latency (5ms - Studio Monitoring)</option>
+                  <option value="low">Balanced Low-Latency (20ms - Standard)</option>
+                  <option value="safe">Conservative Buffer (100ms - Anti-Underrun)</option>
+                </select>
+              </div>
+
+            </div>
+          )}
+
+          {/* 4. RECORDING */}
+          {activeSection === 'recording' && (
+            <div style={{ maxWidth: '640px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                <h2 style={{ fontSize: '15px', fontWeight: 760, margin: 0 }}>Broadcast Recording &amp; Archive Parameters</h2>
+                <button
+                  type="button"
+                  className="ws-secondary-action"
+                  style={{ height: '28px', fontSize: '10px' }}
+                  onClick={() => recorderService.openRecordingFolder()}
+                  title="Open recording folder in Explorer"
+                >
+                  Open Archive Folder
+                </button>
+              </div>
+
+              <div className="ws-form-group">
+                <label className="ws-form-label">Archive Container &amp; Encoding</label>
+                <select className="ws-select" style={{ width: '100%' }} defaultValue="wav">
+                  <option value="wav">WAV Linear PCM 16-bit 48kHz (Lossless Studio Master)</option>
+                  <option value="opus">WebM / Opus 192 kbps (Standard Compressed Archive)</option>
+                </select>
+              </div>
+
+              <div className="ws-form-group">
+                <label className="ws-form-label">Auto-Record Policy</label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: 'var(--ws-text)' }}>
+                  <input type="checkbox" defaultChecked style={{ accentColor: 'var(--ws-live)' }} />
+                  Automatically start recording when broadcast state transitions to ON AIR
+                </label>
+              </div>
+            </div>
+          )}
+
+          {/* 5. DEVICES */}
+          {activeSection === 'devices' && (
+            <div style={{ maxWidth: '640px' }}>
+              <h2 style={{ fontSize: '15px', fontWeight: 760, marginBottom: '16px' }}>Hardware Audio Endpoints &amp; Driver Recovery</h2>
+
+              <div className="ws-banner" data-type="notice" style={{ marginBottom: '16px' }}>
+                <div>
+                  <strong style={{ display: 'block', color: 'var(--ws-text)' }}>Physical Endpoint Controller</strong>
+                  <span>Direct WASAPI / CPAL hardware routing layer. Connects physical microphones and physical monitor headphones with zero software bridging.</span>
+                </div>
+              </div>
+
+              {/* Hardware Disaster Recovery Panel */}
+              <div style={{ border: '1px solid var(--ws-line)', background: 'var(--ws-panel)', padding: '16px', borderRadius: '7px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                  <h3 style={{ fontSize: '13px', fontWeight: 700, margin: 0 }}>Audio Hardware Health &amp; Failover</h3>
+                  <span className="ws-badge" data-variant={recoveryStatus === 'HEALTHY' ? 'live' : 'offline'}>
+                    {recoveryStatus === 'HEALTHY' ? 'HEALTHY' : recoveryStatus === 'RECOVERING' ? 'RECOVERING...' : 'DEGRADED'}
+                  </span>
+                </div>
+                <p style={{ fontSize: '11px', color: 'var(--ws-muted)', margin: '0 0 10px 0' }}>
+                  Automatic driver recovery re-attaches audio streams if a USB microphone or monitor speaker disconnects or stalls.
+                </p>
+                {lastRecoveryMsg && (
+                  <div style={{ fontSize: '11px', fontFamily: 'var(--font-mono)', color: 'var(--ws-subtle)', background: 'var(--ws-panel-2)', padding: '6px 10px', borderRadius: '4px', marginBottom: '10px' }}>
+                    Status: {lastRecoveryMsg} ({recoveryCount} recovery cycles)
+                  </div>
+                )}
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button
+                    type="button"
+                    className="ws-secondary-action"
+                    onClick={handleTriggerRecovery}
+                    disabled={isRecovering}
+                  >
+                    {isRecovering ? 'Recovering...' : '⟳ Trigger Hardware Recovery'}
+                  </button>
+                  <button
+                    type="button"
+                    className="ws-secondary-action"
+                    onClick={() => {
+                      recoveryManager.restoreWorkstationState();
+                      showToast('Workstation state re-synchronized');
+                    }}
+                  >
+                    Restore Startup State
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* 6. OPERATOR */}
+          {activeSection === 'operator' && (
+            <div style={{ maxWidth: '640px' }}>
+              <h2 style={{ fontSize: '15px', fontWeight: 760, marginBottom: '16px' }}>Operator Preferences &amp; Interface</h2>
+
+              <div className="ws-form-group">
+                <label className="ws-form-label">Studio Color Theme</label>
+                <div className="ws-tabs">
+                  <button
+                    type="button"
+                    className="ws-tab-btn"
+                    data-active={theme === 'dark'}
+                    onClick={() => onSetTheme?.('dark')}
+                  >
+                    Studio Dark (Standard)
+                  </button>
+                  <button
+                    type="button"
+                    className="ws-tab-btn"
+                    data-active={theme === 'light'}
+                    onClick={() => onSetTheme?.('light')}
+                  >
+                    Studio Light (High Contrast)
+                  </button>
+                </div>
+              </div>
+
+              <div className="ws-form-group" style={{ marginTop: '16px' }}>
+                <label className="ws-form-label">Motion System Mode</label>
+                <div style={{ fontSize: '11px', color: 'var(--ws-muted)', lineHeight: 1.5 }}>
+                  Broadcst Studio uses Motion 3 (real-time data-driven meters and waveform animation). When system <code>prefers-reduced-motion</code> is active, all continuous animations are automatically disabled.
+                </div>
+              </div>
+
+              {/* Operator Hotkeys Cheat Sheet */}
+              <div style={{ borderTop: '1px solid var(--ws-line)', paddingTop: '16px', marginTop: '16px' }}>
+                <h3 style={{ fontSize: '13px', fontWeight: 700, margin: '0 0 10px 0' }}>Operator Broadcast Hotkeys</h3>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px', fontSize: '11px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 8px', background: 'var(--ws-panel-2)', borderRadius: '4px' }}>
+                    <span style={{ color: 'var(--ws-muted)' }}>Play / Pause Focused Deck</span>
+                    <kbd style={{ fontFamily: 'var(--font-mono)', fontWeight: 700 }}>Space</kbd>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 8px', background: 'var(--ws-panel-2)', borderRadius: '4px' }}>
+                    <span style={{ color: 'var(--ws-muted)' }}>Focus Deck A</span>
+                    <kbd style={{ fontFamily: 'var(--font-mono)', fontWeight: 700 }}>1 / F1</kbd>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 8px', background: 'var(--ws-panel-2)', borderRadius: '4px' }}>
+                    <span style={{ color: 'var(--ws-muted)' }}>Focus Deck B</span>
+                    <kbd style={{ fontFamily: 'var(--font-mono)', fontWeight: 700 }}>2 / F2</kbd>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 8px', background: 'var(--ws-panel-2)', borderRadius: '4px' }}>
+                    <span style={{ color: 'var(--ws-muted)' }}>Quick Mute Mic</span>
+                    <kbd style={{ fontFamily: 'var(--font-mono)', fontWeight: 700 }}>M</kbd>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 8px', background: 'var(--ws-panel-2)', borderRadius: '4px' }}>
+                    <span style={{ color: 'var(--ws-muted)' }}>Toggle Cue Monitor</span>
+                    <kbd style={{ fontFamily: 'var(--font-mono)', fontWeight: 700 }}>C</kbd>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 8px', background: 'var(--ws-panel-2)', borderRadius: '4px' }}>
+                    <span style={{ color: 'var(--ws-muted)' }}>Trigger Session Record</span>
+                    <kbd style={{ fontFamily: 'var(--font-mono)', fontWeight: 700 }}>R</kbd>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* 7. SYSTEM */}
+          {activeSection === 'system' && (
+            <div style={{ maxWidth: '800px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                <div>
+                  <h2 style={{ fontSize: '15px', fontWeight: 760, margin: 0 }}>Operations &amp; Audit History</h2>
+                  <div style={{ fontSize: '11px', color: 'var(--ws-muted)' }}>
+                    Authoritative execution trace for operator macros, hotkeys, schedules, and automation triggers.
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: '6px' }}>
+                  <button type="button" className="ws-secondary-action" onClick={handleExportAuditCsv}>
+                    Export CSV
+                  </button>
+                  <button
+                    type="button"
+                    className="ws-secondary-action"
+                    style={{ color: 'var(--ws-danger)' }}
+                    onClick={() => {
+                      historyService.clear('AUDIT');
+                      showToast('Audit log cleared');
+                    }}
+                  >
+                    Clear Log
+                  </button>
+                </div>
+              </div>
+
+              <div style={{ marginBottom: '12px' }}>
+                <input
+                  type="text"
+                  className="ws-input"
+                  style={{ width: '100%' }}
+                  placeholder="Filter audit logs by action or caller..."
+                  value={auditSearch}
+                  onChange={(e) => setAuditSearch(e.target.value)}
+                />
+              </div>
+
+              <div
                 style={{
-                  marginTop: 'var(--space-1)',
-                  padding: 'var(--space-2) var(--space-4)',
-                  backgroundColor: 'var(--color-surface-elevated)',
-                  border: '1px solid var(--color-border)',
-                  color: 'var(--color-text-primary)',
-                  borderRadius: 'var(--radius-sm)',
-                  fontWeight: 600,
-                  fontSize: 'var(--text-small)',
-                  cursor: 'pointer',
+                  border: '1px solid var(--ws-line)',
+                  borderRadius: '6px',
+                  background: 'var(--ws-panel-2)',
+                  maxHeight: '260px',
+                  overflowY: 'auto',
+                  marginBottom: '16px',
                 }}
               >
-                Push Metadata to Live Stream
-              </button>
-            </form>
-          </section>
+                {auditLogs.length === 0 ? (
+                  <div style={{ padding: '24px', textAlign: 'center', color: 'var(--ws-muted)', fontSize: '12px' }}>
+                    No operations recorded yet. Dispatched actions from UI, hotkeys, schedule, or automation will appear here.
+                  </div>
+                ) : (
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px' }}>
+                    <thead>
+                      <tr style={{ borderBottom: '1px solid var(--ws-line)', textAlign: 'left', color: 'var(--ws-subtle)' }}>
+                        <th style={{ padding: '8px 10px' }}>Time</th>
+                        <th style={{ padding: '8px 10px' }}>Action</th>
+                        <th style={{ padding: '8px 10px' }}>Caller</th>
+                        <th style={{ padding: '8px 10px' }}>Duration</th>
+                        <th style={{ padding: '8px 10px' }}>Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {auditLogs
+                        .filter((l) => {
+                          if (!auditSearch) return true;
+                          const q = auditSearch.toLowerCase();
+                          return l.action.toLowerCase().includes(q) || l.caller.toLowerCase().includes(q);
+                        })
+                        .map((entry) => (
+                          <tr key={entry.id} style={{ borderBottom: '1px solid var(--ws-line)' }}>
+                            <td style={{ padding: '6px 10px', fontFamily: 'var(--font-mono)' }}>
+                              {new Date(entry.timestamp).toLocaleTimeString()}
+                            </td>
+                            <td style={{ padding: '6px 10px', fontWeight: 600 }}>{entry.action}</td>
+                            <td style={{ padding: '6px 10px', color: 'var(--ws-muted)' }}>{entry.caller}</td>
+                            <td style={{ padding: '6px 10px', fontFamily: 'var(--font-mono)' }}>{entry.durationMs}ms</td>
+                            <td style={{ padding: '6px 10px' }}>
+                              <span
+                                style={{
+                                  fontSize: '9px',
+                                  fontWeight: 700,
+                                  padding: '2px 6px',
+                                  borderRadius: '3px',
+                                  background: entry.success ? 'rgba(34, 197, 94, 0.15)' : 'rgba(239, 68, 68, 0.15)',
+                                  color: entry.success ? 'var(--ws-live)' : 'var(--ws-danger)',
+                                }}
+                              >
+                                {entry.success ? 'SUCCESS' : 'FAILED'}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+
+              {/* Control API Security Policy */}
+              <div className="ws-form-group" style={{ borderTop: '1px solid var(--ws-line)', paddingTop: '16px' }}>
+                <label className="ws-form-label">Control API Security Policy</label>
+                <div style={{ fontSize: '11px', color: 'var(--ws-muted)', marginBottom: '8px' }}>
+                  All actions taken by the AI Assistant or MCP external agents are dispatched through the same Control API used by human operators.
+                </div>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: 'var(--ws-text)' }}>
+                  <input
+                    type="checkbox"
+                    checked={controlApi.getPolicy().allowAiCriticalCommands}
+                    onChange={(e) => {
+                      controlApi.setPolicy({ allowAiCriticalCommands: e.target.checked });
+                      showToast(`AI critical command policy: ${e.target.checked ? 'Allowed' : 'Blocked'}`);
+                    }}
+                    style={{ accentColor: 'var(--ws-live)' }}
+                  />
+                  Allow AI Assistant to execute critical actions (Start/Stop Broadcast) without human confirmation
+                </label>
+              </div>
+
+              {/* Reset Station Storage */}
+              <div style={{ marginTop: '16px', borderTop: '1px solid var(--ws-line)', paddingTop: '16px' }}>
+                <h3 style={{ fontSize: '13px', fontWeight: 700, margin: '0 0 8px 0', color: 'var(--ws-danger)' }}>
+                  Reset Station Storage
+                </h3>
+                <p style={{ fontSize: '11px', color: 'var(--ws-muted)', margin: '0 0 10px 0' }}>
+                  Clear all local station profiles, stored transcripts, and playlists from browser storage.
+                </p>
+                <button
+                  type="button"
+                  className="ws-secondary-action"
+                  style={{ color: 'var(--ws-danger)', borderColor: 'var(--ws-danger)' }}
+                  onClick={() => {
+                    if (window.confirm('Reset local cache?')) {
+                      localStorage.clear();
+                      window.location.reload();
+                    }
+                  }}
+                >
+                  Reset Local Storage &amp; Reload
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
-      {/* Console Display & Theme Preferences */}
-      <section
-        style={{
-          backgroundColor: 'var(--color-surface)',
-          border: '1px solid var(--color-border)',
-          borderRadius: 'var(--radius-md)',
-          padding: 'var(--space-4)',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 'var(--space-3)',
-        }}
-      >
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div>
-            <h2 style={{ fontSize: 'var(--text-body)', fontWeight: 700, margin: 0, textTransform: 'uppercase' }}>
-              Console Display and Theme
-            </h2>
-            <p style={{ margin: 'var(--space-1) 0 0', fontSize: 'var(--text-small)', color: 'var(--color-text-secondary)' }}>
-              Switch between Studio Dark console for low-light broadcast environments and Studio Light mode for daytime studio operations.
-            </p>
-          </div>
-
-          <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
-            <button
-              type="button"
-              onClick={() => onSetTheme?.('dark')}
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 'var(--space-2)',
-                padding: 'var(--space-2) var(--space-4)',
-                borderRadius: 'var(--radius-sm)',
-                border: `1px solid ${theme === 'dark' ? 'var(--color-live)' : 'var(--color-border)'}`,
-                backgroundColor: theme === 'dark' ? 'var(--color-surface-elevated)' : 'transparent',
-                color: theme === 'dark' ? 'var(--color-live)' : 'var(--color-text-secondary)',
-                fontWeight: 600,
-                fontSize: 'var(--text-small)',
-                cursor: 'pointer',
-                transition: 'all var(--motion-state)',
-              }}
-            >
-              <span
-                style={{
-                  width: '8px',
-                  height: '8px',
-                  borderRadius: '50%',
-                  backgroundColor: theme === 'dark' ? 'var(--color-live)' : 'var(--color-text-muted)',
-                }}
-              />
-              Dark Console
-            </button>
-            <button
-              type="button"
-              onClick={() => onSetTheme?.('light')}
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 'var(--space-2)',
-                padding: 'var(--space-2) var(--space-4)',
-                borderRadius: 'var(--radius-sm)',
-                border: `1px solid ${theme === 'light' ? 'var(--color-live)' : 'var(--color-border)'}`,
-                backgroundColor: theme === 'light' ? 'var(--color-surface-elevated)' : 'transparent',
-                color: theme === 'light' ? 'var(--color-live)' : 'var(--color-text-secondary)',
-                fontWeight: 600,
-                fontSize: 'var(--text-small)',
-                cursor: 'pointer',
-                transition: 'all var(--motion-state)',
-              }}
-            >
-              <span
-                style={{
-                  width: '8px',
-                  height: '8px',
-                  borderRadius: '50%',
-                  backgroundColor: theme === 'light' ? 'var(--color-live)' : 'var(--color-text-muted)',
-                }}
-              />
-              Light Broadcast
-            </button>
-          </div>
-        </div>
-      </section>
-
-      {/* Create New Station Modal */}
-      {showCreateModal && (
+      {/* Create Station Profile Modal */}
+      {showCreateProfileModal && (
         <div
           style={{
             position: 'fixed',
             inset: 0,
-            backgroundColor: 'rgba(0,0,0,0.75)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
+            background: 'rgba(0,0,0,0.7)',
+            display: 'grid',
+            placeItems: 'center',
             zIndex: 1000,
           }}
         >
           <div
             style={{
-              width: 450,
-              backgroundColor: 'var(--color-surface)',
-              border: '1px solid var(--color-border)',
-              borderRadius: 'var(--radius-md)',
-              padding: 'var(--space-6)',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 'var(--space-4)',
+              width: 'min(460px, 92vw)',
+              background: 'var(--ws-panel)',
+              border: '1px solid var(--ws-line)',
+              borderRadius: '8px',
+              padding: '18px',
             }}
           >
-            <h3 style={{ margin: 0, fontSize: 'var(--text-h2)' }}>Create Station Profile</h3>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+              <h3 style={{ margin: 0, fontSize: '15px', fontWeight: 760 }}>Create Station Profile</h3>
+              <button
+                type="button"
+                className="ws-mini-action"
+                onClick={() => setShowCreateProfileModal(false)}
+              >
+                ✕
+              </button>
+            </div>
 
-            <form onSubmit={handleCreateProfile} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+            <form onSubmit={handleCreateProfile} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
               <div>
-                <label style={{ fontSize: 'var(--text-micro)', color: 'var(--color-text-secondary)', display: 'block', marginBottom: '4px' }}>
-                  STATION NAME
-                </label>
+                <label className="ws-form-label">Station Name</label>
                 <input
                   type="text"
+                  className="ws-input"
+                  style={{ width: '100%' }}
+                  placeholder="e.g. Radio Suara Hidayah"
                   value={newProfileName}
                   onChange={(e) => setNewProfileName(e.target.value)}
-                  placeholder="e.g. Classical Radio 102 FM"
-                  style={{ width: '100%', boxSizing: 'border-box' }}
+                  required
                 />
               </div>
 
               <div>
-                <label style={{ fontSize: 'var(--text-micro)', color: 'var(--color-text-secondary)', display: 'block', marginBottom: '4px' }}>
-                  CALLSIGN / IDENTIFIER
-                </label>
+                <label className="ws-form-label">Callsign</label>
                 <input
                   type="text"
+                  className="ws-input"
+                  style={{ width: '100%' }}
+                  placeholder="e.g. RSH-FM"
                   value={newProfileCallsign}
                   onChange={(e) => setNewProfileCallsign(e.target.value)}
-                  placeholder="e.g. CR-102"
-                  style={{ width: '100%', boxSizing: 'border-box' }}
                 />
               </div>
 
               <div>
-                <label style={{ fontSize: 'var(--text-micro)', color: 'var(--color-text-secondary)', display: 'block', marginBottom: '4px' }}>
-                  GENRE
-                </label>
+                <label className="ws-form-label">Genre</label>
                 <input
                   type="text"
+                  className="ws-input"
+                  style={{ width: '100%' }}
                   value={newProfileGenre}
                   onChange={(e) => setNewProfileGenre(e.target.value)}
-                  placeholder="e.g. Classical & Acoustic"
-                  style={{ width: '100%', boxSizing: 'border-box' }}
                 />
               </div>
 
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 'var(--space-2)', marginTop: 'var(--space-3)' }}>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '12px' }}>
                 <button
                   type="button"
-                  onClick={() => setShowCreateModal(false)}
-                  style={{
-                    padding: 'var(--space-2) var(--space-4)',
-                    borderRadius: 'var(--radius-sm)',
-                    border: '1px solid var(--color-border)',
-                    backgroundColor: 'transparent',
-                    color: 'var(--color-text-primary)',
-                    cursor: 'pointer',
-                  }}
+                  className="ws-secondary-action"
+                  onClick={() => setShowCreateProfileModal(false)}
                 >
                   Cancel
                 </button>
-                <button
-                  type="submit"
-                  style={{
-                    padding: 'var(--space-2) var(--space-4)',
-                    borderRadius: 'var(--radius-sm)',
-                    border: 'none',
-                    backgroundColor: 'var(--color-live)',
-                    color: 'var(--color-live-text)',
-                    fontWeight: 600,
-                    cursor: 'pointer',
-                  }}
-                >
-                  Create & Activate
+                <button type="submit" className="ws-primary-action">
+                  Create Station
                 </button>
               </div>
             </form>
           </div>
         </div>
       )}
-    </div>
+
+      {toastMessage && <div className="ws-toast">{toastMessage}</div>}
+    </section>
   );
 };

@@ -50,6 +50,20 @@ class ControlAPI {
       case 'audio.set_gain':
       case 'audio.set_fader':
       case 'audio.mute':
+      case 'audio.start_monitor':
+      case 'audio.stop_monitor':
+      case 'deck.load':
+      case 'deck.play':
+      case 'deck.pause':
+      case 'deck.stop':
+      case 'deck.seek':
+      case 'deck.set_crossfader':
+      case 'deck.set_auto_advance':
+      case 'playlist.add_file':
+      case 'playlist.remove':
+      case 'playlist.clear':
+      case 'playlist.play_index':
+      case 'control.action':
       case 'transcript.start':
       case 'transcript.stop':
       case 'recording.start':

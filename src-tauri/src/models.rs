@@ -11,7 +11,7 @@ pub enum BroadcastState {
     Error,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ShoutcastConfig {
     pub server: String,
@@ -24,6 +24,23 @@ pub struct ShoutcastConfig {
     pub station_name: String,
     pub genre: Option<String>,
     pub is_public: bool,
+}
+
+impl std::fmt::Debug for ShoutcastConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ShoutcastConfig")
+            .field("server", &self.server)
+            .field("port", &self.port)
+            .field("mount_point", &self.mount_point)
+            .field("stream_id", &self.stream_id)
+            .field("password", &self.password.as_ref().map(|_| "***"))
+            .field("bitrate", &self.bitrate)
+            .field("codec", &self.codec)
+            .field("station_name", &self.station_name)
+            .field("genre", &self.genre)
+            .field("is_public", &self.is_public)
+            .finish()
+    }
 }
 
 impl Default for ShoutcastConfig {
@@ -51,6 +68,8 @@ pub struct BroadcastStatus {
     pub reconnect_count: u32,
     pub error_message: Option<String>,
     pub last_connected_at: Option<String>,
+    pub metadata_delivered: bool,
+    pub metadata_error: Option<String>,
     pub config: ShoutcastConfig,
 }
 
@@ -144,4 +163,25 @@ pub struct TranscriptStatus {
     pub segments_count: usize,
     pub config: TranscriptConfig,
     pub last_error_message: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BroadcastPreflightError {
+    pub field: String,
+    pub code: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StationProfile {
+    pub id: String,
+    pub name: String,
+    pub callsign: Option<String>,
+    pub slogan: Option<String>,
+    pub genre: String,
+    pub server_type: String,
+    pub shoutcast_config: ShoutcastConfig,
+    pub is_active: bool,
 }

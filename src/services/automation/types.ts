@@ -13,7 +13,16 @@ export type ActionType =
   | 'START_RECORD'
   | 'STOP_RECORD'
   | 'PLAY_TONE'
-  | 'PUSH_METADATA';
+  | 'PUSH_METADATA'
+  | 'PLAY_DECK'
+  | 'PAUSE_DECK'
+  | 'STOP_DECK'
+  | 'NEXT_TRACK'
+  | 'TRANSITION_DECK'
+  | 'SET_FADER'
+  | 'SET_MUTE'
+  | 'RECOVER_HARDWARE'
+  | 'SWITCH_STATION_PROFILE';
 
 export interface AutomationAction {
   type: ActionType;

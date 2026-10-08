@@ -25,6 +25,8 @@ export interface BroadcastStatus {
   reconnectCount: number;
   errorMessage?: string;
   lastConnectedAt?: string;
+  metadataDelivered?: boolean;
+  metadataError?: string;
   config: ShoutcastConfig;
 }
 

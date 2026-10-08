@@ -13,6 +13,7 @@ type EventHandler<T> = (payload: T) => void;
 class IPCService {
   private isTauriAvailable = false;
   private eventListeners: Map<string, Set<EventHandler<any>>> = new Map();
+  private fallbackMediaSinks: Map<string, import('../types/ipc').NativeMediaSinkStatus> = new Map();
 
   constructor() {
     this.checkTauriAvailability();
@@ -66,7 +67,8 @@ class IPCService {
     if (this.isTauriAvailable) {
       try {
         const { invoke } = await import('@tauri-apps/api/core');
-        return await invoke(command, params as any);
+        const tauriCmd = command.includes('.') ? command.replace(/\./g, '_') : command;
+        return await invoke(tauriCmd, params as any);
       } catch (err) {
         logger.error('IPC', `Tauri invoke error on ${command}:`, { error: err });
         throw err;
@@ -182,9 +184,9 @@ class IPCService {
           stream: shoutcastService.getMetrics(),
           audio: await this.handleCoreCommand('audio.get_metrics'),
           system: {
-            cpuUsagePercent: 2.8,
-            memoryUsageMb: 88.0,
-            audioThreadTimeMs: 0.9,
+            cpuUsagePercent: 0.0, // Honest unmeasured status (no fake numbers)
+            memoryUsageMb: 0.0,
+            audioThreadTimeMs: 0.0,
           },
         };
         return snapshot;
@@ -216,11 +218,213 @@ class IPCService {
         };
       }
 
+      case 'audio.get_output_devices': {
+        return [
+          {
+            id: 'out-default',
+            name: 'Default System Speaker / Output',
+            isDefault: true,
+            channels: 2,
+            sampleRate: 48000,
+          },
+        ];
+      }
+
+      case 'audio.start_monitor': {
+        return 'Default System Speaker / Output';
+      }
+
+      case 'audio.stop_monitor': {
+        return undefined;
+      }
+
+      case 'deck.load': {
+        return {
+          id: `trk-${Date.now()}`,
+          filePath: params?.filePath ?? '',
+          title: 'Broadcast Track',
+          artist: 'Studio Artist',
+          album: 'Station Sound',
+          durationMs: 180000,
+        };
+      }
+
+      case 'deck.play':
+      case 'deck.pause':
+      case 'deck.stop':
+      case 'deck.restart':
+      case 'deck.unload':
+      case 'deck.seek':
+      case 'deck.set_cue_position':
+      case 'deck.return_to_cue':
+      case 'deck.start_from_cue':
+      case 'deck.set_cue':
+      case 'deck.set_gain':
+      case 'deck.set_mute':
+      case 'deck.trigger_transition':
+      case 'deck.set_crossfader':
+      case 'deck.set_auto_advance':
+      case 'deck.set_monitor_source':
+      case 'deck.set_cue_gain':
+      case 'deck.set_cue_muted':
+        return undefined;
+
+      case 'playback.get_snapshot': {
+        return {
+          deckA: {
+            id: 'deck_a',
+            name: 'Deck A',
+            state: 'empty',
+            track: null,
+            positionMs: 0,
+            durationMs: 0,
+            remainingMs: 0,
+            playbackPercent: 0,
+            cuePositionMs: 0,
+            volume: 1.0,
+            gainDb: 0.0,
+            muted: false,
+            cue: false,
+            looping: false,
+          },
+          deckB: {
+            id: 'deck_b',
+            name: 'Deck B',
+            state: 'empty',
+            track: null,
+            positionMs: 0,
+            durationMs: 0,
+            remainingMs: 0,
+            playbackPercent: 0,
+            cuePositionMs: 0,
+            volume: 1.0,
+            gainDb: 0.0,
+            muted: false,
+            cue: false,
+            looping: false,
+          },
+          activeDeck: 'deck_a',
+          crossfader: 0.0,
+          autoAdvance: true,
+          monitorSource: 'master',
+          cueGainDb: 0.0,
+          cueMuted: false,
+          currentTrack: null,
+          nowPlaying: null,
+          isMonitoring: false,
+          monitorDevice: null,
+          broadcastState: 'OFFLINE',
+          isRecording: false,
+        };
+      }
+
+      case 'playlist.get':
+      case 'playlist.get_library':
+      case 'playlist.scan_folder':
+      case 'playlist.search': {
+        return [];
+      }
+
+      case 'playlist.remove_missing': {
+        return 0;
+      }
+
+      case 'playlist.toggle_pinned':
+      case 'playlist.reorder': {
+        return true;
+      }
+
+      case 'playlist.add_file':
+      case 'playlist.insert_next': {
+        return {
+          id: `pl-${Date.now()}`,
+          filePath: params?.filePath ?? '',
+          title: 'Track',
+          artist: 'Artist',
+          durationMs: 240000,
+        };
+      }
+
+      case 'playlist.remove': {
+        return null;
+      }
+
+      case 'playlist.clear': {
+        return undefined;
+      }
+
+      case 'playlist.play_index': {
+        return {
+          id: `trk-${Date.now()}`,
+          filePath: '',
+          title: 'Queued Track',
+          artist: 'Queued Artist',
+          durationMs: 240000,
+        };
+      }
+
+      case 'recording.get_history': {
+        return [];
+      }
+
+      case 'recording.open_folder': {
+        return undefined;
+      }
+
+      case 'broadcast.preflight_validate': {
+        return [];
+      }
+
+      case 'control.action': {
+        return { success: true };
+      }
+
       case 'metadata.set': {
         if (params?.metadata) {
           shoutcastService.setMetadata(params.metadata);
         }
         return undefined;
+      }
+
+      case 'native_output.get_sinks': {
+        return Array.from(this.fallbackMediaSinks.values());
+      }
+
+      case 'native_output.register_reference_sink': {
+        const { id, name } = params as { id: string; name: string };
+        this.fallbackMediaSinks.set(id, {
+          id,
+          name,
+          state: 'STREAMING',
+          is_streaming: true,
+          frames_written: 0,
+          bytes_sent: 0,
+          dropped_frames: 0,
+          errors_count: 0,
+        });
+        return undefined;
+      }
+
+      case 'native_output.register_rtmp_sink': {
+        const { id, name, endpoint } = params as { id: string; name: string; endpoint: string };
+        this.fallbackMediaSinks.set(id, {
+          id,
+          name,
+          state: 'OPENED',
+          is_streaming: false,
+          frames_written: 0,
+          bytes_sent: 0,
+          dropped_frames: 0,
+          errors_count: 0,
+          endpoint,
+        });
+        return undefined;
+      }
+
+      case 'native_output.unregister_sink': {
+        const { id } = params as { id: string };
+        const existed = this.fallbackMediaSinks.delete(id);
+        return existed;
       }
 
       default:

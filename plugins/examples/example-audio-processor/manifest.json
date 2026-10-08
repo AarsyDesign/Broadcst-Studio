@@ -1,0 +1,17 @@
+{
+  "id": "org.broadcst.example.voice-processor",
+  "name": "Broadcast Voice Leveler & Soft Limiter",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "author": "Broadcst Community Examples",
+  "description": "Example audio processor demonstrating zero-allocation realtime stereo processing and peak limiting contract.",
+  "type": "AUDIO_PROCESSOR",
+  "permissions": [
+    "audio.read",
+    "audio.write"
+  ],
+  "entryPoint": "index.ts",
+  "homepage": "https://github.com/AarsyDesign/Broadcst-Studio",
+  "license": "MIT",
+  "tags": ["audio", "limiter", "voice", "realtime"]
+}

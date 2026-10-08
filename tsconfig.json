@@ -17,9 +17,10 @@
     "noFallthroughCasesInSwitch": true,
     "baseUrl": ".",
     "paths": {
-      "@/*": ["src/*"]
+      "@/*": ["src/*"],
+      "@broadcst/plugin-sdk": ["packages/plugin-sdk/src/index.ts"]
     }
   },
-  "include": ["src"],
+  "include": ["src", "packages/plugin-sdk/src", "plugins/examples"],
   "references": [{ "path": "./tsconfig.node.json" }]
 }

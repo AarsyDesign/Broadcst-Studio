@@ -18,80 +18,63 @@ interface NavigationRailProps {
   onSelectTab: (tab: WorkspaceTab) => void;
 }
 
-interface NavItem {
-  id: WorkspaceTab;
+interface NavGroup {
   label: string;
+  items: { id: WorkspaceTab; label: string }[];
 }
 
-const NAV_ITEMS: NavItem[] = [
-  { id: 'on_air', label: 'ON AIR' },
-  { id: 'sources', label: 'SOURCES' },
-  { id: 'mixer', label: 'MIXER' },
-  { id: 'playlist', label: 'PLAYLIST' },
-  { id: 'schedule', label: 'SCHEDULE' },
-  { id: 'transcript', label: 'TRANSCRIPT' },
-  { id: 'recordings', label: 'RECORDINGS' },
-  { id: 'plugins', label: 'PLUGINS' },
-  { id: 'automation', label: 'AUTOMATION' },
-  { id: 'ai', label: 'AI ASSISTANT' },
-  { id: 'settings', label: 'SETTINGS' },
+const NAV_GROUPS: NavGroup[] = [
+  {
+    label: 'Control',
+    items: [
+      { id: 'on_air', label: 'On Air' },
+      { id: 'sources', label: 'Sources' },
+      { id: 'mixer', label: 'Mixer' },
+      { id: 'playlist', label: 'Playlist' },
+    ],
+  },
+  {
+    label: 'Production',
+    items: [
+      { id: 'schedule', label: 'Schedule' },
+      { id: 'transcript', label: 'Transcript' },
+      { id: 'recordings', label: 'Recordings' },
+    ],
+  },
+  {
+    label: 'System',
+    items: [
+      { id: 'plugins', label: 'Plugins' },
+      { id: 'automation', label: 'Automation' },
+      { id: 'ai', label: 'AI' },
+      { id: 'settings', label: 'Settings' },
+    ],
+  },
 ];
 
 export const NavigationRail: React.FC<NavigationRailProps> = ({ activeTab, onSelectTab }) => {
   return (
-    <nav
-      aria-label="Main Navigation"
-      style={{
-        width: '180px',
-        backgroundColor: 'var(--color-surface)',
-        borderRight: '1px solid var(--color-border)',
-        display: 'flex',
-        flexDirection: 'column',
-        padding: 'var(--space-3) var(--space-2)',
-        gap: 'var(--space-1)',
-        flexShrink: 0,
-        overflowY: 'auto',
-      }}
-    >
-      <div
-        style={{
-          padding: 'var(--space-2) var(--space-3)',
-          fontSize: 'var(--text-micro)',
-          fontWeight: 700,
-          color: 'var(--color-text-muted)',
-          letterSpacing: '0.08em',
-          textTransform: 'uppercase',
-        }}
-      >
-        Console Navigation
-      </div>
-
-      {NAV_ITEMS.map((item) => {
-        const isActive = activeTab === item.id;
-        return (
-          <button
-            key={item.id}
-            onClick={() => onSelectTab(item.id)}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'flex-start',
-              padding: 'var(--space-2) var(--space-3)',
-              borderRadius: 'var(--radius-sm)',
-              fontSize: 'var(--text-small)',
-              fontWeight: isActive ? 600 : 500,
-              color: isActive ? 'var(--color-text-primary)' : 'var(--color-text-secondary)',
-              backgroundColor: isActive ? 'var(--color-surface-elevated)' : 'transparent',
-              borderLeft: isActive ? '3px solid var(--color-live)' : '3px solid transparent',
-              textAlign: 'left',
-              width: '100%',
-              transition: 'all var(--motion-fast)',
-            }}
-          >
-            {item.label}
-          </button>
-        );
-      })}
+    <nav className="ws-nav" aria-label="Broadcst workspace navigation">
+      {NAV_GROUPS.map((group) => (
+        <div className="ws-nav-group" key={group.label}>
+          <div className="ws-nav-label">{group.label}</div>
+          {group.items.map((item) => {
+            const active = activeTab === item.id;
+            return (
+              <button
+                key={item.id}
+                className="ws-nav-button"
+                data-active={active}
+                type="button"
+                aria-current={active ? 'page' : undefined}
+                onClick={() => onSelectTab(item.id)}
+              >
+                {item.label}
+              </button>
+            );
+          })}
+        </div>
+      ))}
     </nav>
   );
 };

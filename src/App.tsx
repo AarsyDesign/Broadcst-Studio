@@ -11,28 +11,24 @@ import { PluginsWorkspace } from './components/PluginsWorkspace';
 import { AutomationWorkspace } from './components/AutomationWorkspace';
 import { AIWorkspace } from './components/AIWorkspace';
 import { ScheduleWorkspace } from './components/ScheduleWorkspace';
+import { PlaylistWorkspace } from './components/PlaylistWorkspace';
 import { ipc } from './services/ipc';
 import { logger } from './services/logger';
+import { playbackService } from './services/playbackService';
+import { recorderService } from './services/recorderService';
+import { recoveryManager } from './services/recovery/recoveryManager';
+import { operationsManager } from './services/operations/operationsManager';
 import { BroadcastStatus } from './types/broadcast';
 import { StreamMetrics } from './types/telemetry';
 import { TranscriptSegment, TranscriptStatus } from './types/transcript';
 
 export const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<WorkspaceTab>('on_air');
-  const [isNative, setIsNative] = useState<boolean>(false);
+  const [isNative, setIsNative] = useState(false);
   const [theme, setTheme] = useState<'dark' | 'light'>(() => {
     const saved = localStorage.getItem('broadcast_theme');
     return saved === 'light' ? 'light' : 'dark';
   });
-
-  useEffect(() => {
-    document.documentElement.setAttribute('data-theme', theme);
-    localStorage.setItem('broadcast_theme', theme);
-  }, [theme]);
-
-  const handleToggleTheme = () => {
-    setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
-  };
 
   const [status, setStatus] = useState<BroadcastStatus>({
     state: 'OFFLINE',
@@ -58,7 +54,7 @@ export const App: React.FC = () => {
     networkLatencyMs: 0,
   });
 
-  const [transcriptStatus, setTranscriptStatus] = useState<TranscriptStatus>({
+  const [transcriptStatus] = useState<TranscriptStatus>({
     state: 'IDLE',
     segmentsCount: 0,
     config: {
@@ -71,51 +67,56 @@ export const App: React.FC = () => {
   });
 
   const [transcriptSegments, setTranscriptSegments] = useState<TranscriptSegment[]>([]);
-  const [masterPeakDb, setMasterPeakDb] = useState<number>(-90);
-  const [masterRmsDb, setMasterRmsDb] = useState<number>(-90);
+  const [masterPeakDb, setMasterPeakDb] = useState(-90);
+  const [masterRmsDb, setMasterRmsDb] = useState(-90);
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('broadcast_theme', theme);
+  }, [theme]);
 
   useEffect(() => {
     setIsNative(ipc.isNative());
-    logger.info('App', 'App initialized, mounting IPC event listeners');
+    logger.info('App', 'Broadcast workstation mounted');
+    recoveryManager.restoreWorkstationState();
 
-    // Fetch initial status
-    ipc.invoke('broadcast.get_status').then((initStatus) => {
-      if (initStatus) setStatus(initStatus);
+    ipc.invoke('broadcast.get_status').then((value) => {
+      if (value) setStatus(value);
     });
 
-    ipc.invoke('transcript.get_segments').then((segs) => {
-      if (segs) setTranscriptSegments(segs);
+    ipc.invoke('transcript.get_segments').then((value) => {
+      if (value) setTranscriptSegments(value);
     });
 
-    // Subscribe to IPC events
-    const unsubStatus = ipc.on('broadcast.status.changed', (newStatus) => {
-      setStatus(newStatus);
-    });
-
-    const unsubMetrics = ipc.on('stream.metrics.changed', (newMetrics) => {
-      setMetrics(newMetrics);
-    });
-
-    const unsubAudio = ipc.on('audio.level.changed', (audioData) => {
-      if (audioData.channelId === 'master') {
-        setMasterPeakDb(audioData.peakDb);
-        setMasterRmsDb(audioData.rmsDb);
+    const unsubStatus = ipc.on('broadcast.status.changed', setStatus);
+    const unsubMetrics = ipc.on('stream.metrics.changed', setMetrics);
+    const unsubAudio = ipc.on('audio.level.changed', (data) => {
+      if (data.channelId === 'master') {
+        setMasterPeakDb(data.peakDb);
+        setMasterRmsDb(data.rmsDb);
       }
+    });
+    const unsubTranscript = ipc.on('transcript.segment.created', (segment) => {
+      setTranscriptSegments((prev) => {
+        const next = prev.filter((item) => item.id !== segment.id);
+        return [...next, segment];
+      });
     });
 
     return () => {
       unsubStatus();
       unsubMetrics();
       unsubAudio();
+      unsubTranscript();
     };
   }, []);
 
   const handleStartBroadcast = async () => {
     try {
-      const res = await ipc.invoke('broadcast.start');
-      setStatus(res);
-      await ipc.invoke('transcript.start');
-      setTranscriptStatus((prev) => ({ ...prev, state: 'LISTENING' }));
+      const op = await operationsManager.dispatch({ action: 'START_BROADCAST', caller: 'OPERATOR_UI' });
+      if (op.success && op.data) {
+        setStatus(op.data);
+      }
     } catch (err) {
       logger.error('Broadcast', 'Failed to start broadcast', { error: err });
     }
@@ -123,10 +124,10 @@ export const App: React.FC = () => {
 
   const handleStopBroadcast = async () => {
     try {
-      const res = await ipc.invoke('broadcast.stop');
-      setStatus(res);
-      await ipc.invoke('transcript.stop');
-      setTranscriptStatus((prev) => ({ ...prev, state: 'IDLE' }));
+      const op = await operationsManager.dispatch({ action: 'STOP_BROADCAST', caller: 'OPERATOR_UI' });
+      if (op.success && op.data) {
+        setStatus(op.data);
+      }
       setMasterPeakDb(-90);
       setMasterRmsDb(-90);
     } catch (err) {
@@ -136,108 +137,141 @@ export const App: React.FC = () => {
 
   const handleReconnect = async () => {
     try {
-      const res = await ipc.invoke('broadcast.reconnect');
-      setStatus(res);
+      const op = await operationsManager.dispatch({ action: 'RECONNECT_BROADCAST', caller: 'OPERATOR_UI' });
+      if (op.success && op.data) {
+        setStatus(op.data);
+      }
     } catch (err) {
       logger.error('Broadcast', 'Reconnect failed', { error: err });
     }
   };
 
+  // ==========================================
+  // OPERATOR HOTKEY CONTROLS
+  // ==========================================
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Guard against typing in form inputs
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.tagName === 'SELECT' ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+
+      // Space -> Toggle Play/Pause active deck
+      if (e.code === 'Space') {
+        e.preventDefault();
+        playbackService.triggerControlAction('toggle_play_pause');
+      }
+      // M -> Toggle mic mute
+      else if (e.key === 'm' || e.key === 'M') {
+        playbackService.triggerControlAction('toggle_mic_mute');
+      }
+      // R -> Toggle recording
+      else if (e.key === 'r' || e.key === 'R') {
+        if (recorderService.getState() === 'RECORDING') {
+          recorderService.stopRecording();
+        } else {
+          recorderService.startRecording();
+        }
+      }
+      // B -> Toggle broadcast
+      else if (e.key === 'b' || e.key === 'B') {
+        if (status.state === 'CONNECTED') {
+          handleStopBroadcast();
+        } else {
+          handleStartBroadcast();
+        }
+      }
+      // N -> Next track
+      else if (e.key === 'n' || e.key === 'N') {
+        playbackService.triggerControlAction('next_track');
+      }
+      // Q -> Cue active deck
+      else if (e.key === 'q' || e.key === 'Q') {
+        playbackService.triggerControlAction('toggle_deck_cue');
+      }
+      // Esc -> Stop active deck
+      else if (e.key === 'Escape') {
+        playbackService.triggerControlAction('stop_active_deck');
+      }
+      // 1 or F1 -> Deck A
+      else if (e.key === '1' || e.key === 'F1') {
+        e.preventDefault();
+        playbackService.triggerControlAction('select_deck', { deckId: 'deck_a' });
+      }
+      // 2 or F2 -> Deck B
+      else if (e.key === '2' || e.key === 'F2') {
+        e.preventDefault();
+        playbackService.triggerControlAction('select_deck', { deckId: 'deck_b' });
+      }
+      // F5 -> Rescan device endpoints
+      else if (e.key === 'F5') {
+        e.preventDefault();
+        ipc.invoke('audio.get_devices');
+        ipc.invoke('audio.get_output_devices');
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [status.state]);
+
+  const activeWorkspace = (() => {
+    switch (activeTab) {
+      case 'on_air':
+        return (
+          <OnAirWorkspace
+            status={status}
+            metrics={metrics}
+            transcriptStatus={transcriptStatus}
+            transcriptSegments={transcriptSegments}
+            masterPeakDb={masterPeakDb}
+            masterRmsDb={masterRmsDb}
+            onStartBroadcast={handleStartBroadcast}
+            onStopBroadcast={handleStopBroadcast}
+            onReconnect={handleReconnect}
+          />
+        );
+      case 'mixer':
+        return <MixerWorkspace />;
+      case 'sources':
+        return <SourcesWorkspace />;
+      case 'transcript':
+        return <TranscriptWorkspace />;
+      case 'schedule':
+        return <ScheduleWorkspace />;
+      case 'recordings':
+        return <RecordingsWorkspace />;
+      case 'plugins':
+        return <PluginsWorkspace />;
+      case 'automation':
+        return <AutomationWorkspace />;
+      case 'ai':
+        return <AIWorkspace />;
+      case 'settings':
+        return <SettingsWorkspace theme={theme} onSetTheme={setTheme} />;
+      case 'playlist':
+        return <PlaylistWorkspace />;
+    }
+  })();
+
   return (
-    <div
-      data-theme={theme}
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        width: '100vw',
-        height: '100vh',
-        overflow: 'hidden',
-        backgroundColor: 'var(--color-bg)',
-      }}
-    >
+    <div className="ws-shell" data-theme={theme} style={{ width: '100vw', height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       <TopStatusBar
         status={status}
         isNative={isNative}
         theme={theme}
-        onToggleTheme={handleToggleTheme}
+        onToggleTheme={() => setTheme((current) => (current === 'dark' ? 'light' : 'dark'))}
       />
-
-      <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+      <div className="ws-app-grid">
         <NavigationRail activeTab={activeTab} onSelectTab={setActiveTab} />
-
-        <main style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-          {activeTab === 'on_air' && (
-            <OnAirWorkspace
-              status={status}
-              metrics={metrics}
-              transcriptStatus={transcriptStatus}
-              transcriptSegments={transcriptSegments}
-              masterPeakDb={masterPeakDb}
-              masterRmsDb={masterRmsDb}
-              onStartBroadcast={handleStartBroadcast}
-              onStopBroadcast={handleStopBroadcast}
-              onReconnect={handleReconnect}
-            />
-          )}
-
-          {activeTab === 'mixer' && <MixerWorkspace />}
-
-          {activeTab === 'sources' && <SourcesWorkspace />}
-
-          {activeTab === 'transcript' && <TranscriptWorkspace />}
-
-          {activeTab === 'schedule' && <ScheduleWorkspace />}
-
-          {activeTab === 'recordings' && <RecordingsWorkspace />}
-
-          {activeTab === 'plugins' && <PluginsWorkspace />}
-
-          {activeTab === 'automation' && <AutomationWorkspace />}
-
-          {activeTab === 'ai' && <AIWorkspace />}
-
-          {activeTab === 'settings' && (
-            <SettingsWorkspace theme={theme} onSetTheme={setTheme} />
-          )}
-
-          {activeTab !== 'on_air' &&
-            activeTab !== 'mixer' &&
-            activeTab !== 'sources' &&
-            activeTab !== 'schedule' &&
-            activeTab !== 'transcript' &&
-            activeTab !== 'recordings' &&
-            activeTab !== 'plugins' &&
-            activeTab !== 'automation' &&
-            activeTab !== 'ai' &&
-            activeTab !== 'settings' && (
-              <div
-                style={{
-                  flex: 1,
-                  padding: 'var(--space-6)',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: 'var(--space-4)',
-                  backgroundColor: 'var(--color-bg)',
-                }}
-              >
-                <h2 style={{ fontSize: 'var(--text-h2)', textTransform: 'uppercase' }}>
-                  {activeTab.replace('_', ' ')}
-                </h2>
-                <div
-                  style={{
-                    padding: 'var(--space-4)',
-                    backgroundColor: 'var(--color-surface)',
-                    border: '1px solid var(--color-border)',
-                    borderRadius: 'var(--radius-md)',
-                    color: 'var(--color-text-secondary)',
-                    fontSize: 'var(--text-small)',
-                  }}
-                >
-                  Workspace scheduled for subsequent phases. Core audio and broadcast pipelines are actively operational.
-                </div>
-              </div>
-            )}
-        </main>
+        <main className="ws-main">{activeWorkspace}</main>
       </div>
     </div>
   );

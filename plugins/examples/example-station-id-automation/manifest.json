@@ -1,0 +1,17 @@
+{
+  "id": "org.broadcst.example.station-id-automation",
+  "name": "Hourly Station ID & Jingle Injector",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "author": "Broadcst Community Examples",
+  "description": "Example automation plugin demonstrating schedule hooks and program queue injection commands.",
+  "type": "AUTOMATION",
+  "permissions": [
+    "automation.read",
+    "automation.execute"
+  ],
+  "entryPoint": "index.ts",
+  "homepage": "https://github.com/AarsyDesign/Broadcst-Studio",
+  "license": "MIT",
+  "tags": ["automation", "station-id", "jingles", "schedule"]
+}

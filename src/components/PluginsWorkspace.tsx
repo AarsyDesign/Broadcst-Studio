@@ -1,696 +1,1332 @@
 import React, { useState, useEffect } from 'react';
 import { pluginHost } from '../services/plugin/pluginHost';
-import { pluginRegistry, RegistryPluginItem } from '../services/plugin/pluginRegistry';
-import type { PluginInstance, PluginManifest } from '../services/plugin/types';
+import { pluginRegistry, SamplePluginEntry } from '../services/plugin/pluginRegistry';
+import {
+  PluginInstance,
+  PluginManifest,
+  ValidationResult,
+  validateManifest,
+} from '../services/plugin/types';
+import { outputRouter, PluginOutputTarget } from '../services/plugin/outputRouter';
+import { NativeMediaSinkStatus } from '../types/ipc';
+import { PluginUISlotRenderer } from './PluginUISlotRenderer';
 
 export const PluginsWorkspace: React.FC = () => {
-  const [activeSubTab, setActiveSubTab] = useState<'installed' | 'registry'>('installed');
+  const [activeSubTab, setActiveSubTab] = useState<'installed' | 'outputs' | 'sideload' | 'samples'>('installed');
   const [plugins, setPlugins] = useState<PluginInstance[]>(pluginHost.getPlugins());
-  const [catalog, setCatalog] = useState<RegistryPluginItem[]>(pluginRegistry.getCatalog());
-  const [selectedCategory, setSelectedCategory] = useState<string>('all');
+  const [samples, setSamples] = useState<SamplePluginEntry[]>(pluginRegistry.getAvailableSamples());
+  const [pluginOutputs, setPluginOutputs] = useState<PluginOutputTarget[]>(() => outputRouter.getPluginOutputs());
+  const [nativeSinks, setNativeSinks] = useState<NativeMediaSinkStatus[]>(() => outputRouter.getNativeSinks());
+  const [selectedType, setSelectedType] = useState<string>('all');
+  const [selectedStatus, setSelectedStatus] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
 
-  // Import Modal
-  const [showImportModal, setShowImportModal] = useState(false);
-  const [importJson, setImportJson] = useState('');
+  // Sideload & Validation State
+  const [sideloadJson, setSideloadJson] = useState<string>('');
+  const [validationResult, setValidationResult] = useState<ValidationResult | null>(null);
+
+  // Manifest Inspector Modal
+  const [inspectedManifest, setInspectedManifest] = useState<PluginManifest | null>(null);
+  const [inspectedOutputId, setInspectedOutputId] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   useEffect(() => {
-    const unsubHost = pluginHost.subscribe((list) => {
-      setPlugins(list);
+    const unsubReg = pluginRegistry.subscribe(() => {
+      setPlugins(pluginHost.getPlugins());
+      setSamples(pluginRegistry.getAvailableSamples());
     });
 
-    const unsubReg = pluginRegistry.subscribe(() => {
-      setCatalog(pluginRegistry.getCatalog());
+    const unsubOut = outputRouter.subscribe(() => {
+      setPluginOutputs(outputRouter.getPluginOutputs());
+      setNativeSinks(outputRouter.getNativeSinks());
     });
 
     return () => {
-      unsubHost();
       unsubReg();
+      unsubOut();
     };
   }, []);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
-    setTimeout(() => setToastMessage(null), 3000);
+    setTimeout(() => setToastMessage(null), 3500);
   };
+
+  // Live validator on sideload JSON change
+  useEffect(() => {
+    if (!sideloadJson.trim()) {
+      setValidationResult(null);
+      return;
+    }
+    try {
+      const parsed = JSON.parse(sideloadJson);
+      const res = validateManifest(parsed);
+      setValidationResult(res);
+    } catch (e: any) {
+      setValidationResult({
+        valid: false,
+        errors: [`JSON Syntax Error: ${e.message}`],
+        warnings: [],
+        compatibility: 'UNSUPPORTED',
+      });
+    }
+  }, [sideloadJson]);
 
   const handleTogglePlugin = async (id: string, currentlyEnabled: boolean) => {
     if (currentlyEnabled) {
-      await pluginHost.disablePlugin(id);
-      showToast(`Plugin disabled: ${id}`);
+      const ok = await pluginRegistry.disablePlugin(id);
+      showToast(ok ? `Plugin disabled: ${id}` : `Failed disabling plugin: ${id}`);
     } else {
-      await pluginHost.enablePlugin(id);
-      showToast(`Plugin enabled: ${id}`);
+      const ok = await pluginRegistry.enablePlugin(id);
+      showToast(ok ? `Plugin enabled: ${id}` : `Failed enabling plugin: ${id}`);
     }
   };
 
-  const handleSimulateCrash = (id: string) => {
-    pluginHost.simulateCrash(id);
-    showToast(`Simulated crash on ${id}. Audio engine remains unaffected.`);
+  const handleReloadPlugin = async (id: string) => {
+    await pluginRegistry.disablePlugin(id);
+    const ok = await pluginRegistry.enablePlugin(id);
+    showToast(ok ? `Reloaded plugin: ${id}` : `Failed reloading plugin: ${id}`);
   };
 
-  const handleRestartPlugin = async (id: string) => {
-    await pluginHost.enablePlugin(id);
-    showToast(`Restarted plugin: ${id}`);
+  const handleUninstall = async (id: string, name: string) => {
+    const ok = await pluginRegistry.uninstallPlugin(id);
+    showToast(ok ? `Uninstalled "${name}"` : `Failed uninstalling "${name}"`);
   };
 
-  const handleInstallFromRegistry = async (pluginId: string, name: string) => {
-    const success = await pluginRegistry.installPlugin(pluginId);
-    if (success) {
-      showToast(`Installed and enabled "${name}"`);
+  const handleInstallSample = async (id: string, name: string) => {
+    const ok = await pluginRegistry.installSample(id);
+    if (ok) {
+      await pluginRegistry.enablePlugin(id);
+      showToast(`Installed & enabled sample "${name}"`);
+      setActiveSubTab('installed');
     } else {
-      showToast(`Failed to install "${name}"`);
+      showToast(`Failed installing sample "${name}"`);
     }
   };
 
-  const handleUninstall = async (pluginId: string, name: string) => {
-    const success = await pluginRegistry.uninstallPlugin(pluginId);
-    if (success) {
-      showToast(`Uninstalled "${name}"`);
-    } else {
-      showToast(`Failed to uninstall "${name}"`);
-    }
-  };
-
-  const handleImportCustom = async (e: React.FormEvent) => {
+  const handleCommitSideload = async (e: React.FormEvent) => {
     e.preventDefault();
-    try {
-      const manifest: PluginManifest = JSON.parse(importJson);
-      if (!manifest.id || !manifest.name) {
-        showToast('Invalid manifest: "id" and "name" are required');
-        return;
-      }
-      await pluginHost.registerPlugin(manifest);
-      await pluginHost.enablePlugin(manifest.id);
-      setShowImportModal(false);
-      setImportJson('');
-      showToast(`Custom plugin "${manifest.name}" imported and running`);
-    } catch (err: any) {
-      showToast(`Import error: ${err.message}`);
+    if (!validationResult || !validationResult.valid || !validationResult.manifest) {
+      showToast('Cannot sideload: Please fix manifest validation errors first');
+      return;
+    }
+
+    const res = await pluginRegistry.installFromManifest(validationResult.manifest);
+    if (res.success) {
+      showToast(`Successfully registered "${validationResult.manifest.name}"`);
+      setSideloadJson('');
+      setActiveSubTab('installed');
+    } else {
+      showToast(`Registration failed: ${res.error}`);
     }
   };
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'RUNNING':
-        return 'var(--color-live)';
-      case 'STARTING':
-        return 'var(--color-warning)';
-      case 'ERROR':
-      case 'CRASHED':
-        return 'var(--color-error)';
-      default:
-        return 'var(--color-text-muted)';
+  const handleLoadTemplate = (templateType: 'processor' | 'output' | 'metadata' | 'automation' | 'utility') => {
+    let tpl: Partial<PluginManifest>;
+    if (templateType === 'processor') {
+      tpl = {
+        id: 'com.developer.custom-equalizer',
+        name: 'Custom Studio Equalizer',
+        version: '1.0.0',
+        apiVersion: 1,
+        author: 'Station Audio Engineer',
+        description: 'Realtime 3-band parametric tone equalization stage.',
+        type: 'AUDIO_PROCESSOR',
+        permissions: ['audio.read', 'audio.write'],
+        entryPoint: 'index.js',
+      };
+    } else if (templateType === 'metadata') {
+      tpl = {
+        id: 'com.developer.web-now-playing',
+        name: 'Station Web Now-Playing Broadcaster',
+        version: '1.0.0',
+        apiVersion: 1,
+        author: 'Webmaster',
+        description: 'Dispatches HTTP JSON payloads to station website when track changes.',
+        type: 'METADATA',
+        permissions: ['metadata.read', 'network'],
+        entryPoint: 'index.js',
+      };
+    } else if (templateType === 'automation') {
+      tpl = {
+        id: 'com.developer.ad-break-automation',
+        name: 'Commercial Pod Rotation Macro',
+        version: '1.0.0',
+        apiVersion: 1,
+        author: 'Traffic Ops',
+        description: 'Injects scheduled sponsor spots and advances program deck.',
+        type: 'AUTOMATION',
+        permissions: ['automation.read', 'automation.execute'],
+        entryPoint: 'index.js',
+      };
+    } else if (templateType === 'output') {
+      tpl = {
+        id: 'com.developer.custom-rtmp-output',
+        name: 'Custom RTMP Audio Streamer',
+        version: '1.0.0',
+        apiVersion: 1,
+        author: 'Broadcaster',
+        description: 'Syndicates master broadcast audio to RTMP endpoint with UI control panel.',
+        type: 'OUTPUT',
+        permissions: ['output.manage', 'metadata.read', 'ui.contribute'],
+        entryPoint: 'index.js',
+      };
+    } else {
+      tpl = {
+        id: 'com.developer.level-watchdog',
+        name: 'Continuous Audio Health Watchdog',
+        version: '1.0.0',
+        apiVersion: 1,
+        author: 'Engineering',
+        description: 'Periodic background inspector for channel balance and clipped frames.',
+        type: 'UTILITY',
+        permissions: ['audio.read'],
+        entryPoint: 'index.js',
+      };
     }
+    setSideloadJson(JSON.stringify(tpl, null, 2));
   };
 
-  const categories = [
-    { id: 'all', label: 'ALL CATEGORIES' },
-    { id: 'AudioEffect', label: 'AUDIO EFFECTS' },
-    { id: 'Utility', label: 'UTILITIES' },
-    { id: 'Metadata', label: 'METADATA' },
-    { id: 'Automation', label: 'AUTOMATION' },
-    { id: 'Output', label: 'OUTPUTS' },
+  const PLUGIN_TYPES: { id: string; label: string }[] = [
+    { id: 'all', label: 'All Extension Types' },
+    { id: 'OUTPUT', label: 'Output & Streaming' },
+    { id: 'AUDIO_PROCESSOR', label: 'Audio Processor (Realtime)' },
+    { id: 'AUDIO_SOURCE', label: 'Audio Source' },
+    { id: 'METADATA', label: 'Metadata & Syndication' },
+    { id: 'AUTOMATION', label: 'Automation & Macros' },
+    { id: 'UTILITY', label: 'Utility & Diagnostics' },
+  ];
+
+  const STATUS_FILTERS: { id: string; label: string }[] = [
+    { id: 'all', label: 'All Statuses' },
+    { id: 'ENABLED', label: 'Enabled' },
+    { id: 'DISABLED', label: 'Disabled' },
+    { id: 'READY', label: 'Ready' },
+    { id: 'ERROR', label: 'Error / Crashed' },
   ];
 
   const filteredInstalled = plugins.filter((p) => {
-    if (selectedCategory !== 'all' && p.manifest.category.toLowerCase() !== selectedCategory.toLowerCase()) {
+    if (selectedType !== 'all' && p.manifest.type !== selectedType) {
+      return false;
+    }
+    if (selectedStatus !== 'all' && p.state !== selectedStatus) {
       return false;
     }
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
-      return p.manifest.name.toLowerCase().includes(q) || p.manifest.description.toLowerCase().includes(q);
-    }
-    return true;
-  });
-
-  const filteredRegistry = catalog.filter((item) => {
-    if (selectedCategory !== 'all' && item.manifest.category.toLowerCase() !== selectedCategory.toLowerCase()) {
-      return false;
-    }
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      return (
-        item.manifest.name.toLowerCase().includes(q) ||
-        item.manifest.description.toLowerCase().includes(q) ||
-        item.author.toLowerCase().includes(q) ||
-        item.tags.some((t) => t.toLowerCase().includes(q))
-      );
+      const matchName = p.manifest.name.toLowerCase().includes(q);
+      const matchDesc = p.manifest.description.toLowerCase().includes(q);
+      const matchId = p.manifest.id.toLowerCase().includes(q);
+      const matchAuthor = p.manifest.author.toLowerCase().includes(q);
+      return matchName || matchDesc || matchId || matchAuthor;
     }
     return true;
   });
 
   return (
-    <div
+    <section
+      className="ws-workspace"
       style={{
         display: 'flex',
         flexDirection: 'column',
-        width: '100%',
+        gap: '12px',
         height: '100%',
-        backgroundColor: 'var(--color-bg)',
-        overflow: 'hidden',
+        minHeight: 0,
+        overflowY: 'auto',
       }}
     >
-      {/* Top Header */}
-      <header
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          padding: 'var(--space-3) var(--space-6)',
-          backgroundColor: 'var(--color-surface)',
-          borderBottom: '1px solid var(--color-border)',
-        }}
-      >
+      {/* Command & Control Bar */}
+      <div className="ws-command-row">
         <div>
-          <h1 style={{ fontSize: 'var(--text-h2)', margin: 0, fontWeight: 700, textTransform: 'uppercase' }}>
-            Ecosystem Plugins & Extensions
-          </h1>
-          <p style={{ fontSize: 'var(--text-micro)', color: 'var(--color-text-secondary)', margin: '2px 0 0 0' }}>
-            Isolated worker execution ensures plugin crashes never interrupt the on-air audio transmission.
+          <div className="ws-kicker">Platform Architecture / Extensibility</div>
+          <h1 className="ws-title">Broadcst Plugin Runtime</h1>
+          <p className="ws-subtitle">
+            Public Plugin API v1 runtime for realtime audio processors, metadata syndication, automation macros, and background utilities.
           </p>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
-          {/* Sub-tab switcher */}
-          <div
-            style={{
-              display: 'flex',
-              backgroundColor: 'var(--color-bg)',
-              borderRadius: 'var(--radius-sm)',
-              padding: '2px',
-              border: '1px solid var(--color-border)',
-            }}
-          >
+        <div className="ws-transport">
+          <div className="ws-tabs">
             <button
+              type="button"
+              className="ws-tab-btn"
+              data-active={activeSubTab === 'installed'}
               onClick={() => setActiveSubTab('installed')}
-              style={{
-                padding: 'var(--space-1) var(--space-3)',
-                borderRadius: 'var(--radius-sm)',
-                border: 'none',
-                backgroundColor: activeSubTab === 'installed' ? 'var(--color-surface-elevated)' : 'transparent',
-                color: activeSubTab === 'installed' ? 'var(--color-live)' : 'var(--color-text-secondary)',
-                fontWeight: activeSubTab === 'installed' ? 700 : 400,
-                fontSize: 'var(--text-small)',
-                cursor: 'pointer',
-              }}
             >
               Installed ({plugins.length})
             </button>
             <button
-              onClick={() => setActiveSubTab('registry')}
-              style={{
-                padding: 'var(--space-1) var(--space-3)',
-                borderRadius: 'var(--radius-sm)',
-                border: 'none',
-                backgroundColor: activeSubTab === 'registry' ? 'var(--color-surface-elevated)' : 'transparent',
-                color: activeSubTab === 'registry' ? 'var(--color-live)' : 'var(--color-text-secondary)',
-                fontWeight: activeSubTab === 'registry' ? 700 : 400,
-                fontSize: 'var(--text-small)',
-                cursor: 'pointer',
-              }}
+              type="button"
+              className="ws-tab-btn"
+              data-active={activeSubTab === 'outputs'}
+              onClick={() => setActiveSubTab('outputs')}
             >
-              Plugin Registry ({catalog.length})
+              Outputs & UI Panels ({pluginOutputs.length})
+            </button>
+            <button
+              type="button"
+              className="ws-tab-btn"
+              data-active={activeSubTab === 'sideload'}
+              onClick={() => setActiveSubTab('sideload')}
+            >
+              Developer Sideload
+            </button>
+            <button
+              type="button"
+              className="ws-tab-btn"
+              data-active={activeSubTab === 'samples'}
+              onClick={() => setActiveSubTab('samples')}
+            >
+              SDK Examples ({samples.length})
             </button>
           </div>
 
           <button
-            onClick={() => setShowImportModal(true)}
-            style={{
-              padding: 'var(--space-2) var(--space-3)',
-              borderRadius: 'var(--radius-sm)',
-              border: '1px solid var(--color-border)',
-              backgroundColor: 'var(--color-surface-elevated)',
-              color: 'var(--color-text-primary)',
-              fontSize: 'var(--text-small)',
-              cursor: 'pointer',
-            }}
+            type="button"
+            className="ws-secondary-action"
+            onClick={() => setActiveSubTab('sideload')}
+            title="Open local plugin manifest validator and sideload wizard"
           >
-            + Sideload Plugin
+            + Sideload Local Plugin
           </button>
         </div>
-      </header>
-
-      {/* Toast Notification */}
-      {toastMessage && (
-        <div
-          style={{
-            position: 'absolute',
-            top: 50,
-            right: 24,
-            padding: 'var(--space-2) var(--space-4)',
-            backgroundColor: 'var(--color-surface-elevated)',
-            border: '1px solid var(--color-live)',
-            borderRadius: 'var(--radius-sm)',
-            color: 'var(--color-text-primary)',
-            fontSize: 'var(--text-small)',
-            zIndex: 100,
-            boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
-          }}
-        >
-          {toastMessage}
-        </div>
-      )}
-
-      {/* Search & Filter Strip */}
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          padding: 'var(--space-3) var(--space-6)',
-          backgroundColor: 'var(--color-surface)',
-          borderBottom: '1px solid var(--color-border)',
-          gap: 'var(--space-4)',
-        }}
-      >
-        <div style={{ display: 'flex', gap: 'var(--space-1)', overflowX: 'auto' }}>
-          {categories.map((c) => (
-            <button
-              key={c.id}
-              onClick={() => setSelectedCategory(c.id)}
-              style={{
-                padding: 'var(--space-1) var(--space-3)',
-                borderRadius: 'var(--radius-sm)',
-                border: '1px solid var(--color-border)',
-                backgroundColor: selectedCategory === c.id ? 'var(--color-surface-elevated)' : 'transparent',
-                color: selectedCategory === c.id ? 'var(--color-live)' : 'var(--color-text-secondary)',
-                fontSize: 'var(--text-micro)',
-                fontWeight: selectedCategory === c.id ? 700 : 400,
-                cursor: 'pointer',
-                whiteSpace: 'nowrap',
-              }}
-            >
-              {c.label}
-            </button>
-          ))}
-        </div>
-
-        <input
-          type="text"
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          placeholder="Filter plugins by name, keywords, or author..."
-          style={{
-            minWidth: 280,
-            padding: 'var(--space-1) var(--space-3)',
-            backgroundColor: 'var(--color-bg)',
-            border: '1px solid var(--color-border)',
-            borderRadius: 'var(--radius-sm)',
-            color: 'var(--color-text-primary)',
-            fontSize: 'var(--text-small)',
-            outline: 'none',
-          }}
-        />
       </div>
 
-      {/* Main Content Area */}
-      <div
-        style={{
-          flex: 1,
-          overflowY: 'auto',
-          padding: 'var(--space-6)',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 'var(--space-4)',
-        }}
-      >
-        {/* SUBTAB 1: INSTALLED PLUGINS */}
-        {activeSubTab === 'installed' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-            {filteredInstalled.length === 0 ? (
-              <div
-                style={{
-                  padding: 'var(--space-6)',
-                  textAlign: 'center',
-                  backgroundColor: 'var(--color-surface)',
-                  borderRadius: 'var(--radius-md)',
-                  color: 'var(--color-text-secondary)',
-                }}
-              >
-                No installed plugins match the filter. Browse the Plugin Registry tab to install new tools.
-              </div>
-            ) : (
-              filteredInstalled.map((p) => (
-                <div
-                  key={p.manifest.id}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    padding: 'var(--space-4)',
-                    backgroundColor: 'var(--color-surface)',
-                    border: '1px solid var(--color-border)',
-                    borderRadius: 'var(--radius-md)',
-                  }}
-                >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-4)' }}>
-                    {/* Status Pill */}
-                    <div
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 'var(--space-2)',
-                        minWidth: 100,
-                      }}
-                    >
-                      <span
-                        style={{
-                          width: 8,
-                          height: 8,
-                          borderRadius: '50%',
-                          backgroundColor: getStatusColor(p.status),
-                          boxShadow: p.status === 'RUNNING' ? '0 0 6px var(--color-live)' : 'none',
-                        }}
-                      />
-                      <span
-                        style={{
-                          fontSize: 'var(--text-micro)',
-                          fontWeight: 700,
-                          color: getStatusColor(p.status),
-                        }}
-                      >
-                        {p.status}
-                      </span>
-                    </div>
+      {/* Honest Architecture & Security Banner */}
+      <div className="ws-banner" data-type="notice">
+        <div>
+          <strong style={{ display: 'block', color: 'var(--ws-text)', marginBottom: '2px', fontSize: '12px' }}>
+            Current Execution Environment: In-Process Developer Runtime (API v1)
+          </strong>
+          <span style={{ color: 'var(--ws-muted)', fontSize: '11px', lineHeight: 1.4 }}>
+            In-process execution is a developer preview and <strong>not a security sandbox</strong>. Broadcst Studio platform architecture isolates community plugins into dedicated WebAssembly / native subprocess runtimes. Realtime audio processors execute deterministic zero-allocation contracts.
+          </span>
+        </div>
+        <span className="ws-badge" data-variant="warning">IN-PROCESS PREVIEW</span>
+      </div>
 
+      {/* SUBTAB 1: INSTALLED PLUGINS */}
+      {activeSubTab === 'installed' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+          {/* Filtering Toolbar */}
+          <div className="ws-toolbar">
+            <div className="ws-toolbar-group">
+              <span className="ws-toolbar-label">Category</span>
+              <select
+                className="ws-select"
+                value={selectedType}
+                onChange={(e) => setSelectedType(e.target.value)}
+              >
+                {PLUGIN_TYPES.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="ws-toolbar-group">
+              <span className="ws-toolbar-label">Status</span>
+              <select
+                className="ws-select"
+                value={selectedStatus}
+                onChange={(e) => setSelectedStatus(e.target.value)}
+              >
+                {STATUS_FILTERS.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="ws-toolbar-group" style={{ flex: 1 }}>
+              <input
+                type="text"
+                className="ws-input"
+                placeholder="Filter plugins by name, ID, author, or keywords..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
+            </div>
+          </div>
+
+          {filteredInstalled.length === 0 ? (
+            <div className="ws-empty">
+              <div>
+                <strong>No Installed Plugins Found</strong>
+                <p>No extensions match your active filter. Check the SDK Examples tab or sideload a local plugin manifest.</p>
+              </div>
+            </div>
+          ) : (
+            <div style={{ display: 'grid', gap: '10px' }}>
+              {filteredInstalled.map((p) => {
+                const isRunning = p.state === 'ENABLED';
+                const isError = p.state === 'ERROR';
+                const isReady = p.state === 'READY';
+
+                return (
+                  <div
+                    key={p.manifest.id}
+                    style={{
+                      padding: '14px 16px',
+                      border: '1px solid var(--ws-line)',
+                      borderRadius: '7px',
+                      background: 'var(--ws-panel)',
+                      display: 'grid',
+                      gridTemplateColumns: 'minmax(0, 1fr) auto',
+                      gap: '14px',
+                      alignItems: 'center',
+                    }}
+                  >
                     <div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
-                        <span style={{ fontSize: 'var(--text-body)', fontWeight: 700 }}>{p.manifest.name}</span>
-                        <span style={{ fontSize: 'var(--text-micro)', color: 'var(--color-text-muted)' }}>
-                          v{p.manifest.version}
-                        </span>
+                      {/* Identity & Status Pill Row */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px', flexWrap: 'wrap' }}>
                         <span
+                          className="ws-badge"
+                          data-variant={isRunning ? 'live' : isError ? 'danger' : isReady ? 'info' : 'neutral'}
+                        >
+                          {p.state}
+                        </span>
+
+                        <span className="ws-tag">
+                          {p.manifest.type.replace('_', ' ')}
+                        </span>
+
+                        <span
+                          className="ws-tag"
                           style={{
-                            padding: '1px 6px',
-                            borderRadius: 'var(--radius-sm)',
-                            fontSize: 'var(--text-micro)',
-                            backgroundColor: 'var(--color-surface-elevated)',
-                            color: 'var(--color-text-secondary)',
-                            border: '1px solid var(--color-border)',
+                            color: p.executionDomain === 'REALTIME_AUDIO' ? 'var(--ws-warning)' : 'var(--ws-live)',
+                            borderColor: p.executionDomain === 'REALTIME_AUDIO' ? 'var(--ws-warning)' : 'var(--ws-line)',
                           }}
                         >
-                          {p.manifest.category}
+                          {p.executionDomain === 'REALTIME_AUDIO' ? 'Domain A: Realtime (Contract)' : 'Domain B: Non-Realtime'}
+                        </span>
+
+                        <span className="ws-tag" style={{ color: 'var(--ws-subtle)' }}>
+                          {p.registrationSource === 'DEV_DIRECT_REGISTRATION' ? 'Dev Direct' : 'Package'}
+                        </span>
+
+                        <span className="ws-tag" style={{ color: 'var(--ws-live)', fontFamily: 'var(--font-mono)' }}>
+                          API v{p.manifest.apiVersion}
+                        </span>
+
+                        <span style={{ fontSize: '10px', color: 'var(--ws-subtle)', fontFamily: 'var(--font-mono)' }}>
+                          v{p.manifest.version}
+                        </span>
+
+                        <span style={{ fontSize: '11px', color: 'var(--ws-muted)' }}>
+                          by {p.manifest.author}
+                        </span>
+
+                        <span style={{ fontSize: '10px', color: 'var(--ws-subtle)', fontFamily: 'var(--font-mono)' }}>
+                          [{p.manifest.id}]
                         </span>
                       </div>
 
-                      <div style={{ fontSize: 'var(--text-small)', color: 'var(--color-text-secondary)', marginTop: '2px' }}>
+                      {/* Title & Description */}
+                      <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--ws-text)' }}>
+                        {p.manifest.name}
+                      </div>
+                      <div style={{ fontSize: '11px', color: 'var(--ws-muted)', marginTop: '3px', lineHeight: 1.4 }}>
                         {p.manifest.description}
                       </div>
 
-                      {p.errorMessage && (
-                        <div style={{ fontSize: 'var(--text-micro)', color: 'var(--color-error)', marginTop: '4px' }}>
-                          Error: {p.errorMessage}
+                      {/* Runtime entrypoint missing notice */}
+                      {!p.plugin && (
+                        <div
+                          style={{
+                            marginTop: '6px',
+                            padding: '4px 8px',
+                            borderRadius: '4px',
+                            background: 'rgba(245, 158, 11, 0.08)',
+                            border: '1px dashed var(--ws-warning)',
+                            color: 'var(--ws-warning)',
+                            fontSize: '10.5px',
+                          }}
+                        >
+                          ⚠️ Runtime entrypoint not loaded. Sideloaded manifest requires an executable plugin instance to enable.
                         </div>
                       )}
 
-                      <div style={{ fontSize: 'var(--text-micro)', color: 'var(--color-text-muted)', marginTop: '4px' }}>
-                        Author: {p.manifest.author} | Memory: ~{p.memoryEstimateKb} KB | Permissions: {p.manifest.permissions.join(', ')}
+                      {/* Error Banner */}
+                      {p.errorMessage && (
+                        <div
+                          style={{
+                            marginTop: '8px',
+                            padding: '6px 10px',
+                            borderRadius: '4px',
+                            background: 'rgba(239, 68, 68, 0.1)',
+                            border: '1px solid var(--ws-danger)',
+                            color: 'var(--ws-danger)',
+                            fontSize: '11px',
+                            fontFamily: 'var(--font-mono)',
+                          }}
+                        >
+                          Runtime Error: {p.errorMessage}
+                        </div>
+                      )}
+
+                      {/* Declared Permissions & Capabilities */}
+                      <div style={{ display: 'flex', gap: '5px', marginTop: '10px', flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: '10px', color: 'var(--ws-subtle)', alignSelf: 'center', marginRight: '4px' }}>
+                          Permissions:
+                        </span>
+                        {p.manifest.permissions.length === 0 ? (
+                          <span className="ws-tag">None (Sandboxed)</span>
+                        ) : (
+                          p.manifest.permissions.map((perm) => (
+                            <span
+                              key={perm}
+                              className="ws-tag"
+                              style={{
+                                color: perm === 'network' || perm.startsWith('filesystem') ? 'var(--ws-warning)' : 'var(--ws-text)',
+                              }}
+                              title={
+                                perm === 'network' || perm.startsWith('filesystem')
+                                  ? 'Declared in manifest. Scoped host broker API pending.'
+                                  : 'Active and enforced by host gateway.'
+                              }
+                            >
+                              {perm} {perm === 'network' || perm.startsWith('filesystem') ? ' (Declared)' : ' (Enforced)'}
+                            </span>
+                          ))
+                        )}
+
+                        {p.manifest.type === 'AUDIO_PROCESSOR' && (
+                          <span className="ws-tag" style={{ color: 'var(--ws-warning)', borderColor: 'var(--ws-warning)' }}>
+                            Contract (Native Target)
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Operational Action Buttons */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', alignItems: 'flex-end' }}>
+                      <div style={{ display: 'flex', gap: '6px' }}>
+                        {isError && (
+                          <button
+                            type="button"
+                            className="ws-secondary-action"
+                            style={{ height: '30px', fontSize: '11px' }}
+                            onClick={() => handleReloadPlugin(p.manifest.id)}
+                            title="Retry plugin initialization"
+                          >
+                            Retry
+                          </button>
+                        )}
+
+                        {isRunning && (
+                          <button
+                            type="button"
+                            className="ws-secondary-action"
+                            style={{ height: '30px', fontSize: '11px' }}
+                            onClick={() => handleReloadPlugin(p.manifest.id)}
+                            title="Hot-reload plugin without restart"
+                          >
+                            Reload
+                          </button>
+                        )}
+
+                        <button
+                          type="button"
+                          className={isRunning ? 'ws-secondary-action' : 'ws-primary-action'}
+                          style={{ height: '30px', fontSize: '11px' }}
+                          onClick={() => handleTogglePlugin(p.manifest.id, isRunning)}
+                        >
+                          {isRunning ? 'Disable' : 'Enable'}
+                        </button>
+                      </div>
+
+                      <div style={{ display: 'flex', gap: '6px' }}>
+                        <button
+                          type="button"
+                          className="ws-mini-action"
+                          onClick={() => setInspectedManifest(p.manifest)}
+                          title="Inspect raw manifest JSON and capabilities"
+                        >
+                          Inspect
+                        </button>
+                        <button
+                          type="button"
+                          className="ws-mini-action"
+                          style={{ color: 'var(--ws-danger)' }}
+                          onClick={() => handleUninstall(p.manifest.id, p.manifest.name)}
+                          title="Uninstall extension from runtime"
+                        >
+                          Uninstall
+                        </button>
                       </div>
                     </div>
                   </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
 
-                  {/* Actions */}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
-                    {p.status === 'CRASHED' || p.status === 'ERROR' ? (
-                      <button
-                        onClick={() => handleRestartPlugin(p.manifest.id)}
-                        style={{
-                          padding: 'var(--space-1) var(--space-3)',
-                          borderRadius: 'var(--radius-sm)',
-                          border: 'none',
-                          backgroundColor: 'var(--color-live)',
-                          color: 'var(--color-live-text)',
-                          fontWeight: 600,
-                          fontSize: 'var(--text-small)',
-                          cursor: 'pointer',
-                        }}
-                      >
-                        Restart
-                      </button>
-                    ) : (
-                      <>
-                        <button
-                          onClick={() => handleTogglePlugin(p.manifest.id, p.enabled)}
-                          style={{
-                            padding: 'var(--space-1) var(--space-3)',
-                            borderRadius: 'var(--radius-sm)',
-                            border: '1px solid var(--color-border)',
-                            backgroundColor: p.enabled ? 'var(--color-surface-elevated)' : 'transparent',
-                            color: p.enabled ? 'var(--color-live)' : 'var(--color-text-muted)',
-                            fontSize: 'var(--text-small)',
-                            fontWeight: 600,
-                            cursor: 'pointer',
-                          }}
-                        >
-                          {p.enabled ? 'Enabled' : 'Disabled'}
-                        </button>
-
-                        {p.enabled && (
-                          <button
-                            onClick={() => handleSimulateCrash(p.manifest.id)}
-                            style={{
-                              padding: 'var(--space-1) var(--space-2)',
-                              borderRadius: 'var(--radius-sm)',
-                              border: '1px solid var(--color-border)',
-                              backgroundColor: 'transparent',
-                              color: 'var(--color-warning)',
-                              fontSize: 'var(--text-micro)',
-                              cursor: 'pointer',
-                            }}
-                          >
-                            Test Crash
-                          </button>
-                        )}
-                      </>
-                    )}
-
-                    <button
-                      onClick={() => handleUninstall(p.manifest.id, p.manifest.name)}
-                      style={{
-                        padding: 'var(--space-1) var(--space-2)',
-                        borderRadius: 'var(--radius-sm)',
-                        border: '1px solid var(--color-border)',
-                        backgroundColor: 'transparent',
-                        color: 'var(--color-error)',
-                        fontSize: 'var(--text-small)',
-                        cursor: 'pointer',
-                      }}
-                    >
-                      Uninstall
-                    </button>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        )}
-
-        {/* SUBTAB 2: PLUGIN REGISTRY & STORE */}
-        {activeSubTab === 'registry' && (
+      {/* SUBTAB 2: OUTPUT TARGETS & UI EXTENSIONS */}
+      {activeSubTab === 'outputs' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+          {/* Architecture Concept Header */}
           <div
             style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))',
-              gap: 'var(--space-4)',
+              padding: '14px 16px',
+              borderRadius: '7px',
+              background: 'var(--ws-panel)',
+              border: '1px solid var(--ws-line)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '6px',
             }}
           >
-            {filteredRegistry.map((item) => {
-              const installed = pluginHost.getPlugins().some((p) => p.manifest.id === item.manifest.id);
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span className="ws-strip-source">MASTER AUDIO ROUTER</span>
+                <strong style={{ fontSize: '13px', color: 'var(--ws-text)' }}>
+                  Extensible Output Syndication Architecture
+                </strong>
+              </div>
+              <span className="ws-tag" style={{ color: 'var(--ws-live)' }}>
+                CORE → ROUTER → TARGETS
+              </span>
+            </div>
+            <p style={{ margin: 0, fontSize: '11.5px', color: 'var(--ws-muted)', lineHeight: 1.5 }}>
+              Broadcst Studio separates native transmission from plugin syndication. <strong>SHOUTcast</strong> runs as first-class low-latency native C/Rust code. Third-party destinations (e.g. <strong>Telegram Live</strong>, RTMP, YouTube) are managed through the <strong>OutputPlugin</strong> contract without hardcoding service logic into core.
+            </p>
+          </div>
+
+          {/* Configured Output Targets List */}
+          <div
+            style={{
+              padding: '14px 16px',
+              borderRadius: '7px',
+              background: 'var(--ws-panel)',
+              border: '1px solid var(--ws-line)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '10px',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <strong style={{ fontSize: '13px', color: 'var(--ws-text)' }}>
+                Registered Audio Sinks & Syndication Targets ({pluginOutputs.length + 2})
+              </strong>
+              <span className="ws-tag">2 NATIVE SINKS + {pluginOutputs.length} PLUGINS</span>
+            </div>
+
+            {/* Native SHOUTcast summary row */}
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                padding: '10px 12px',
+                background: 'var(--ws-panel-2)',
+                border: '1px solid var(--ws-line)',
+                borderRadius: '6px',
+              }}
+            >
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <strong style={{ fontSize: '12px', color: 'var(--ws-text)' }}>SHOUTcast DNAS 2.6+</strong>
+                  <span className="ws-tag" style={{ color: 'var(--ws-live)' }}>NATIVE CORE</span>
+                </div>
+                <div style={{ fontSize: '10.5px', color: 'var(--ws-muted)', marginTop: '2px', fontFamily: 'var(--font-mono)' }}>
+                  Primary high-performance MP3 broadcast encoder & transmitter (Dedicated worker thread)
+                </div>
+              </div>
+              <span className="ws-badge" data-variant="live">CORE RUNTIME</span>
+            </div>
+
+            {/* Native Reference MediaSink Developer Diagnostic Row */}
+            {(() => {
+              const refSink = nativeSinks.find((s) => s.id === 'ref-diagnostic-sink');
+              const isRefRunning = Boolean(refSink && refSink.state === 'STREAMING');
+              const isRefError = Boolean(refSink && refSink.state === 'ERROR');
 
               return (
                 <div
-                  key={item.manifest.id}
                   style={{
-                    backgroundColor: 'var(--color-surface)',
-                    border: '1px solid var(--color-border)',
-                    borderRadius: 'var(--radius-md)',
-                    padding: 'var(--space-4)',
                     display: 'flex',
                     flexDirection: 'column',
-                    justifyContent: 'space-between',
+                    gap: '8px',
+                    padding: '10px 12px',
+                    background: 'var(--ws-panel-2)',
+                    border: '1px solid var(--ws-line)',
+                    borderRadius: '6px',
                   }}
                 >
-                  <div>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 'var(--space-1)' }}>
-                      <span
-                        style={{
-                          padding: '1px 6px',
-                          borderRadius: 'var(--radius-sm)',
-                          fontSize: 'var(--text-micro)',
-                          backgroundColor: 'var(--color-surface-elevated)',
-                          color: 'var(--color-info)',
-                          border: '1px solid var(--color-border)',
-                        }}
-                      >
-                        {item.manifest.category}
-                      </span>
-                      <span style={{ fontSize: 'var(--text-micro)', color: 'var(--color-text-muted)' }}>
-                        ★ {item.rating} ({item.downloadsCount} installs)
-                      </span>
-                    </div>
-
-                    <div style={{ fontSize: 'var(--text-body)', fontWeight: 700, marginBottom: '2px' }}>
-                      {item.manifest.name}
-                    </div>
-
-                    <div style={{ fontSize: 'var(--text-micro)', color: 'var(--color-text-secondary)', marginBottom: 'var(--space-2)' }}>
-                      by {item.author} | v{item.manifest.version}
-                    </div>
-
-                    <p style={{ fontSize: 'var(--text-small)', color: 'var(--color-text-secondary)', lineHeight: 1.5, margin: 0, marginBottom: 'var(--space-3)' }}>
-                      {item.manifest.description}
-                    </p>
-
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginBottom: 'var(--space-3)' }}>
-                      {item.tags.map((t) => (
-                        <span
-                          key={t}
-                          style={{
-                            padding: '1px 4px',
-                            borderRadius: 'var(--radius-sm)',
-                            fontSize: 'var(--text-micro)',
-                            backgroundColor: 'var(--color-bg)',
-                            color: 'var(--color-text-muted)',
-                          }}
-                        >
-                          #{t}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <strong style={{ fontSize: '12px', color: 'var(--ws-text)' }}>
+                          Master Audio Reference Tap
+                        </strong>
+                        <span className="ws-tag" style={{ color: 'var(--ws-accent)' }}>
+                          DIAGNOSTIC MODE
                         </span>
-                      ))}
+                      </div>
+                      <div style={{ fontSize: '10.5px', color: 'var(--ws-muted)', marginTop: '2px', fontFamily: 'var(--font-mono)' }}>
+                        Native MediaSink lock-free PCM tap (48kHz stereo f32) consuming real master blocks without network
+                      </div>
+                    </div>
+
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span
+                        className="ws-badge"
+                        data-variant={isRefRunning ? 'live' : isRefError ? 'danger' : 'neutral'}
+                        style={{
+                          color: isRefRunning ? 'var(--ws-accent)' : undefined,
+                          borderColor: isRefRunning ? 'var(--ws-accent)' : undefined,
+                        }}
+                      >
+                        {refSink ? refSink.state : 'INACTIVE'}
+                      </span>
+                      <button
+                        type="button"
+                        className={isRefRunning ? 'ws-secondary-action' : 'ws-primary-action'}
+                        style={{ height: '28px', fontSize: '10.5px' }}
+                        onClick={async () => {
+                          if (refSink) {
+                            await outputRouter.unregisterNativeSink('ref-diagnostic-sink');
+                            showToast('Unregistered Master Audio Reference Tap');
+                          } else {
+                            await outputRouter.registerReferenceMediaSink(
+                              'ref-diagnostic-sink',
+                              'Master Audio Reference Tap'
+                            );
+                            showToast('Registered Master Audio Reference Tap');
+                          }
+                        }}
+                      >
+                        {refSink ? 'Disable Tap' : 'Enable Diagnostic Tap'}
+                      </button>
                     </div>
                   </div>
 
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingTop: 'var(--space-2)', borderTop: '1px solid var(--color-border)' }}>
-                    <div style={{ fontSize: 'var(--text-micro)', color: 'var(--color-text-muted)' }}>
-                      Permissions: {item.manifest.permissions.join(', ')}
+                  {refSink && (
+                    <div
+                      style={{
+                        padding: '6px 8px',
+                        background: 'var(--ws-panel-3)',
+                        borderRadius: '4px',
+                        display: 'flex',
+                        flexWrap: 'wrap',
+                        gap: '16px',
+                        fontSize: '10px',
+                        fontFamily: 'var(--font-mono)',
+                        color: 'var(--ws-muted)',
+                      }}
+                    >
+                      <span>
+                        Frames Written:{' '}
+                        <strong style={{ color: 'var(--ws-text)' }}>
+                          {refSink.frames_written.toLocaleString()}
+                        </strong>
+                      </span>
+                      <span>
+                        Dropped Frames:{' '}
+                        <strong style={{ color: refSink.dropped_frames > 0 ? 'var(--ws-warning)' : 'var(--ws-text)' }}>
+                          {refSink.dropped_frames}
+                        </strong>
+                      </span>
+                      <span>
+                        Buffer Policy:{' '}
+                        <strong style={{ color: 'var(--ws-text)' }}>
+                          Bounded Lock-Free (64 Blocks / 640ms)
+                        </strong>
+                      </span>
+                      {refSink.error_message && (
+                        <span style={{ color: 'var(--ws-danger)' }}>
+                          Error: {refSink.error_message}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+
+            {/* Plugin Output Targets */}
+            {pluginOutputs.map((target) => {
+              const isRef = Boolean(target.status.isReferenceOnly || target.status.state === 'REFERENCE_ONLY');
+              const isTrulyLive = target.status.state === 'CONNECTED' && Boolean(target.status.transportRunning) && !isRef;
+              const isInspected = inspectedOutputId === target.pluginId;
+
+              return (
+                <div
+                  key={target.pluginId}
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '8px',
+                    padding: '10px 12px',
+                    background: 'var(--ws-panel-2)',
+                    border: '1px solid var(--ws-line)',
+                    borderRadius: '6px',
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <strong style={{ fontSize: '12px', color: 'var(--ws-text)' }}>{target.name}</strong>
+                        <span className="ws-tag">PLUGIN OUTPUT</span>
+                        {isRef && (
+                          <span className="ws-tag" style={{ color: 'var(--ws-accent)', borderColor: 'var(--ws-accent)' }}>
+                            ARCHITECTURAL REF
+                          </span>
+                        )}
+                      </div>
+                      <div style={{ fontSize: '10.5px', color: 'var(--ws-muted)', marginTop: '2px', fontFamily: 'var(--font-mono)' }}>
+                        {target.status.destinationName} • {target.status.targetEndpoint || 'RTMP/Syndication Target'}
+                      </div>
                     </div>
 
-                    {installed ? (
-                      <button
-                        onClick={() => handleUninstall(item.manifest.id, item.manifest.name)}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span
+                        className="ws-badge"
+                        data-variant={isTrulyLive ? 'live' : target.status.state === 'CONNECTING' ? 'warning' : 'neutral'}
                         style={{
-                          padding: 'var(--space-1) var(--space-3)',
-                          borderRadius: 'var(--radius-sm)',
-                          border: '1px solid var(--color-border)',
-                          backgroundColor: 'var(--color-surface-elevated)',
-                          color: 'var(--color-error)',
-                          fontSize: 'var(--text-small)',
-                          cursor: 'pointer',
+                          color: isRef ? 'var(--ws-accent)' : undefined,
+                          borderColor: isRef ? 'var(--ws-accent)' : undefined,
                         }}
                       >
-                        Uninstall
-                      </button>
-                    ) : (
+                        {isRef ? 'REFERENCE ONLY' : target.status.state}
+                      </span>
                       <button
-                        onClick={() => handleInstallFromRegistry(item.manifest.id, item.manifest.name)}
-                        style={{
-                          padding: 'var(--space-1) var(--space-3)',
-                          borderRadius: 'var(--radius-sm)',
-                          border: 'none',
-                          backgroundColor: 'var(--color-live)',
-                          color: 'var(--color-live-text)',
-                          fontWeight: 600,
-                          fontSize: 'var(--text-small)',
-                          cursor: 'pointer',
+                        type="button"
+                        className="ws-mini-action"
+                        onClick={() => setInspectedOutputId(isInspected ? null : target.pluginId)}
+                        title="Inspect output capabilities & retry policy"
+                      >
+                        {isInspected ? 'Hide Info' : 'Inspect'}
+                      </button>
+                      <button
+                        type="button"
+                        className={isTrulyLive || (isRef && target.status.state === 'REFERENCE_ONLY') ? 'ws-secondary-action' : 'ws-primary-action'}
+                        style={{ height: '28px', fontSize: '10.5px' }}
+                        onClick={async () => {
+                          if (target.status.state === 'CONNECTED' || target.status.state === 'REFERENCE_ONLY') {
+                            await outputRouter.stopOutput(target.pluginId);
+                            showToast(`Deactivated output: ${target.name}`);
+                          } else {
+                            await outputRouter.startOutput(target.pluginId);
+                            showToast(`Activated output: ${target.name}`);
+                          }
                         }}
                       >
-                        Install
+                        {isRef
+                          ? target.status.state === 'REFERENCE_ONLY'
+                            ? 'Deactivate Ref'
+                            : 'Activate Ref'
+                          : target.status.state === 'CONNECTED'
+                          ? 'Disconnect'
+                          : 'Connect Target'}
                       </button>
-                    )}
+                    </div>
                   </div>
+
+                  {/* Expandable Output Capability & Diagnostics Inspector */}
+                  {isInspected && (
+                    <div
+                      style={{
+                        marginTop: '4px',
+                        padding: '10px 12px',
+                        borderRadius: '4px',
+                        background: 'var(--ws-panel-3)',
+                        border: '1px solid var(--ws-line)',
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+                        gap: '8px',
+                        fontSize: '10.5px',
+                        fontFamily: 'var(--font-mono)',
+                      }}
+                    >
+                      <div>
+                        <span style={{ color: 'var(--ws-muted)' }}>Execution Domain:</span>{' '}
+                        <strong style={{ color: 'var(--ws-text)' }}>Domain B (Non-Realtime Async)</strong>
+                      </div>
+                      <div>
+                        <span style={{ color: 'var(--ws-muted)' }}>Media Boundary:</span>{' '}
+                        <strong style={{ color: 'var(--ws-accent)' }}>Native MediaSink (Rust)</strong>
+                      </div>
+                      <div>
+                        <span style={{ color: 'var(--ws-muted)' }}>Transport State:</span>{' '}
+                        <strong style={{ color: isTrulyLive ? 'var(--ws-live)' : 'var(--ws-warning)' }}>
+                          {isTrulyLive ? 'STREAMING' : 'NOT RUNNING'}
+                        </strong>
+                      </div>
+                      <div>
+                        <span style={{ color: 'var(--ws-muted)' }}>Health:</span>{' '}
+                        <strong style={{ color: 'var(--ws-text)' }}>{target.status.health || 'REFERENCE'}</strong>
+                      </div>
+                      <div>
+                        <span style={{ color: 'var(--ws-muted)' }}>Native Sink State:</span>{' '}
+                        <strong style={{ color: target.nativeSink ? 'var(--ws-accent)' : 'var(--ws-muted)' }}>
+                          {target.nativeSink?.state || target.status.diagnostics?.nativeSinkState || 'No native sink'}
+                        </strong>
+                      </div>
+                      <div>
+                        <span style={{ color: 'var(--ws-muted)' }}>Dropped Frames:</span>{' '}
+                        <strong style={{ color: (target.nativeSink?.dropped_frames ?? target.status.diagnostics?.droppedFrames ?? 0) > 0 ? 'var(--ws-warning)' : 'var(--ws-text)' }}>
+                          {target.nativeSink?.dropped_frames ?? target.status.diagnostics?.droppedFrames ?? 0}
+                        </strong>
+                      </div>
+                      {target.status.retryPolicy && (
+                        <div style={{ gridColumn: '1 / -1' }}>
+                          <span style={{ color: 'var(--ws-muted)' }}>Retry Policy:</span>{' '}
+                          <strong style={{ color: 'var(--ws-text)' }}>
+                            Max {target.status.retryPolicy.maxRetries} attempts @ {target.status.retryPolicy.retryIntervalMs}ms
+                            {target.status.retryPolicy.exponentialBackoff ? ' (Exponential Backoff)' : ''}
+                          </strong>
+                        </div>
+                      )}
+                      {(target.nativeSink?.error_message || target.status.diagnostics?.reason) && (
+                        <div style={{ gridColumn: '1 / -1', color: 'var(--ws-danger)' }}>
+                          Error: {target.nativeSink?.error_message || target.status.diagnostics?.reason}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               );
             })}
           </div>
-        )}
-      </div>
 
-      {/* Sideload Plugin Modal */}
-      {showImportModal && (
+          {/* Plugin Contributed UI Panels Section */}
+          <div
+            style={{
+              padding: '14px 16px',
+              borderRadius: '7px',
+              background: 'var(--ws-panel)',
+              border: '1px solid var(--ws-line)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '12px',
+            }}
+          >
+            <div>
+              <strong style={{ fontSize: '13px', color: 'var(--ws-text)' }}>
+                Plugin UI Extensions Surface
+              </strong>
+              <p style={{ margin: '3px 0 0', fontSize: '11px', color: 'var(--ws-muted)' }}>
+                Controlled UI panels contributed by active plugins. Components are isolated by ErrorBoundaries and styled via workstation design tokens.
+              </p>
+            </div>
+
+            <PluginUISlotRenderer slot="OUTPUT_PANEL" onNotify={showToast} />
+            <PluginUISlotRenderer slot="SETTINGS_PANEL" onNotify={showToast} />
+          </div>
+        </div>
+      )}
+
+      {/* SUBTAB 2: DEVELOPER SIDELOAD & DIAGNOSTICS */}
+      {activeSubTab === 'sideload' && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(320px, 1.2fr) minmax(280px, 1fr)', gap: '14px' }}>
+          {/* Manifest Input Form */}
+          <div
+            style={{
+              background: 'var(--ws-panel)',
+              border: '1px solid var(--ws-line)',
+              borderRadius: '7px',
+              padding: '16px',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '12px',
+            }}
+          >
+            <div>
+              <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--ws-text)' }}>
+                Developer Sideload Console
+              </div>
+              <p style={{ fontSize: '11px', color: 'var(--ws-muted)', margin: '4px 0 0 0' }}>
+                Paste or edit a Broadcst Plugin Manifest JSON. The validator will check API compatibility, permission declarations, and entry points in real-time.
+              </p>
+            </div>
+
+            {/* Template Buttons */}
+            <div>
+              <span style={{ fontSize: '10px', color: 'var(--ws-subtle)', display: 'block', marginBottom: '6px' }}>
+                Load SDK Manifest Template:
+              </span>
+              <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  className="ws-mini-action"
+                  onClick={() => handleLoadTemplate('processor')}
+                >
+                  Audio Processor
+                </button>
+                <button
+                  type="button"
+                  className="ws-mini-action"
+                  onClick={() => handleLoadTemplate('metadata')}
+                >
+                  Metadata Bridge
+                </button>
+                <button
+                  type="button"
+                  className="ws-mini-action"
+                  onClick={() => handleLoadTemplate('automation')}
+                >
+                  Automation Macro
+                </button>
+                <button
+                  type="button"
+                  className="ws-mini-action"
+                  onClick={() => handleLoadTemplate('output')}
+                >
+                  Output Streamer
+                </button>
+                <button
+                  type="button"
+                  className="ws-mini-action"
+                  onClick={() => handleLoadTemplate('utility')}
+                >
+                  Silence Watchdog
+                </button>
+              </div>
+            </div>
+
+            <form onSubmit={handleCommitSideload} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <textarea
+                className="ws-input"
+                style={{
+                  width: '100%',
+                  height: '240px',
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: '11px',
+                  padding: '10px',
+                  lineHeight: 1.45,
+                }}
+                placeholder='Paste manifest.json here...'
+                value={sideloadJson}
+                onChange={(e) => setSideloadJson(e.target.value)}
+              />
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+                <button
+                  type="button"
+                  className="ws-secondary-action"
+                  onClick={() => setSideloadJson('')}
+                >
+                  Clear
+                </button>
+                <button
+                  type="submit"
+                  className="ws-primary-action"
+                  disabled={!validationResult || !validationResult.valid}
+                  title={!validationResult?.valid ? 'Resolve validation issues first' : 'Register and sideload into runtime'}
+                >
+                  Register & Install Plugin →
+                </button>
+              </div>
+            </form>
+          </div>
+
+          {/* Real-time Diagnostics Inspector */}
+          <div
+            style={{
+              background: 'var(--ws-panel)',
+              border: '1px solid var(--ws-line)',
+              borderRadius: '7px',
+              padding: '16px',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '12px',
+            }}
+          >
+            <div>
+              <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--ws-text)' }}>
+                Validation Diagnostics
+              </div>
+              <p style={{ fontSize: '11px', color: 'var(--ws-muted)', margin: '4px 0 0 0' }}>
+                Continuous schema validation per Broadcst Plugin API v1 specifications.
+              </p>
+            </div>
+
+            {!validationResult ? (
+              <div
+                style={{
+                  padding: '24px 16px',
+                  textAlign: 'center',
+                  color: 'var(--ws-muted)',
+                  fontSize: '11px',
+                  background: 'var(--ws-panel-2)',
+                  borderRadius: '5px',
+                  border: '1px dashed var(--ws-line)',
+                }}
+              >
+                Paste a manifest on the left or select a template to inspect diagnostics.
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                {/* Result Status Badges */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span
+                    className="ws-badge"
+                    data-variant={validationResult.valid ? 'live' : 'danger'}
+                  >
+                    {validationResult.valid ? 'SCHEMA VALID' : 'VALIDATION FAILED'}
+                  </span>
+                  <span
+                    className="ws-badge"
+                    data-variant={
+                      validationResult.compatibility === 'SUPPORTED'
+                        ? 'live'
+                        : validationResult.compatibility === 'DEPRECATED'
+                        ? 'warning'
+                        : 'danger'
+                    }
+                  >
+                    API: {validationResult.compatibility}
+                  </span>
+                </div>
+
+                {/* Validation Errors */}
+                {validationResult.errors.length > 0 && (
+                  <div
+                    style={{
+                      background: 'rgba(239, 68, 68, 0.08)',
+                      border: '1px solid var(--ws-danger)',
+                      borderRadius: '5px',
+                      padding: '10px',
+                    }}
+                  >
+                    <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--ws-danger)', marginBottom: '4px' }}>
+                      Errors ({validationResult.errors.length}):
+                    </div>
+                    <ul style={{ margin: 0, paddingLeft: '16px', fontSize: '10.5px', color: 'var(--ws-text)' }}>
+                      {validationResult.errors.map((err, idx) => (
+                        <li key={idx} style={{ marginBottom: '2px' }}>
+                          {err}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {/* Validation Warnings */}
+                {validationResult.warnings.length > 0 && (
+                  <div
+                    style={{
+                      background: 'rgba(245, 158, 11, 0.08)',
+                      border: '1px solid var(--ws-warning)',
+                      borderRadius: '5px',
+                      padding: '10px',
+                    }}
+                  >
+                    <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--ws-warning)', marginBottom: '4px' }}>
+                      Warnings ({validationResult.warnings.length}):
+                    </div>
+                    <ul style={{ margin: 0, paddingLeft: '16px', fontSize: '10.5px', color: 'var(--ws-text)' }}>
+                      {validationResult.warnings.map((warn, idx) => (
+                        <li key={idx}>{warn}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {/* Parsed Summary Card if Valid */}
+                {validationResult.valid && validationResult.manifest && (
+                  <div
+                    style={{
+                      background: 'var(--ws-panel-2)',
+                      border: '1px solid var(--ws-line)',
+                      borderRadius: '5px',
+                      padding: '10px',
+                      fontSize: '11px',
+                    }}
+                  >
+                    <div style={{ fontWeight: 700, color: 'var(--ws-text)', marginBottom: '6px' }}>
+                      Parsed Extension Profile
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '90px 1fr', gap: '4px', color: 'var(--ws-muted)' }}>
+                      <span>Identifier:</span>
+                      <strong style={{ color: 'var(--ws-text)', fontFamily: 'var(--font-mono)' }}>
+                        {validationResult.manifest.id}
+                      </strong>
+                      <span>Type:</span>
+                      <strong style={{ color: 'var(--ws-text)' }}>{validationResult.manifest.type}</strong>
+                      <span>API Version:</span>
+                      <strong style={{ color: 'var(--ws-live)' }}>v{validationResult.manifest.apiVersion}</strong>
+                      <span>Entrypoint:</span>
+                      <span style={{ fontFamily: 'var(--font-mono)' }}>
+                        {validationResult.manifest.entryPoint || 'index.js (default)'}
+                      </span>
+                    </div>
+
+                    <div style={{ marginTop: '8px' }}>
+                      <span style={{ color: 'var(--ws-subtle)', display: 'block', marginBottom: '4px' }}>
+                        Required Permissions:
+                      </span>
+                      <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                        {validationResult.manifest.permissions.map((p) => (
+                          <span key={p} className="ws-tag">
+                            {p}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* SUBTAB 3: SDK EXAMPLES */}
+      {activeSubTab === 'samples' && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: '12px' }}>
+          {samples.map((sample) => {
+            const isInstalled = plugins.some((p) => p.manifest.id === sample.manifest.id);
+
+            return (
+              <div
+                key={sample.manifest.id}
+                style={{
+                  padding: '14px 16px',
+                  border: '1px solid var(--ws-line)',
+                  borderRadius: '7px',
+                  background: 'var(--ws-panel)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  justifyContent: 'space-between',
+                  gap: '12px',
+                }}
+              >
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
+                    <span className="ws-tag">
+                      {sample.manifest.type.replace('_', ' ')}
+                    </span>
+                    <span className="ws-badge" data-variant="live">
+                      OFFICIAL SDK SAMPLE
+                    </span>
+                  </div>
+
+                  <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--ws-text)' }}>
+                    {sample.manifest.name}
+                  </div>
+                  <div style={{ fontSize: '11px', color: 'var(--ws-muted)', marginTop: '2px' }}>
+                    by {sample.manifest.author} • v{sample.manifest.version}
+                  </div>
+                  <div style={{ fontSize: '11.5px', color: 'var(--ws-text)', marginTop: '6px', lineHeight: 1.45 }}>
+                    {sample.manifest.description}
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', marginTop: '10px' }}>
+                    {sample.manifest.permissions.map((p) => (
+                      <span key={p} className="ws-tag">
+                        {p}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '6px', borderTop: '1px solid var(--ws-line)', paddingTop: '10px' }}>
+                  {isInstalled ? (
+                    <button
+                      type="button"
+                      className="ws-secondary-action"
+                      style={{ height: '28px', fontSize: '10px' }}
+                      onClick={() => setActiveSubTab('installed')}
+                    >
+                      Manage in Installed →
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className="ws-primary-action"
+                      style={{ height: '28px', fontSize: '10px' }}
+                      onClick={() => handleInstallSample(sample.manifest.id, sample.manifest.name)}
+                    >
+                      Install & Activate
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Manifest Inspection Modal */}
+      {inspectedManifest && (
         <div
           style={{
             position: 'fixed',
             inset: 0,
-            backgroundColor: 'rgba(0,0,0,0.75)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
+            background: 'rgba(0,0,0,0.7)',
+            display: 'grid',
+            placeItems: 'center',
             zIndex: 1000,
           }}
         >
           <div
             style={{
-              width: 500,
-              backgroundColor: 'var(--color-surface)',
-              border: '1px solid var(--color-border)',
-              borderRadius: 'var(--radius-md)',
-              padding: 'var(--space-6)',
+              width: 'min(580px, 92vw)',
+              background: 'var(--ws-panel)',
+              border: '1px solid var(--ws-line)',
+              borderRadius: '8px',
+              padding: '18px',
               display: 'flex',
               flexDirection: 'column',
-              gap: 'var(--space-4)',
+              gap: '12px',
             }}
           >
-            <div>
-              <h3 style={{ margin: 0, fontSize: 'var(--text-h2)' }}>Sideload Custom Plugin Manifest</h3>
-              <p style={{ margin: 'var(--space-1) 0 0 0', fontSize: 'var(--text-small)', color: 'var(--color-text-secondary)' }}>
-                Paste the JSON manifest of your custom plugin to register and run it inside the failure-isolated host sandbox.
-              </p>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: '14px', fontWeight: 700 }}>
+                  Manifest Inspector: {inspectedManifest.name}
+                </h3>
+                <span style={{ fontSize: '10px', color: 'var(--ws-muted)', fontFamily: 'var(--font-mono)' }}>
+                  ID: {inspectedManifest.id}
+                </span>
+              </div>
+              <button
+                type="button"
+                className="ws-mini-action"
+                onClick={() => setInspectedManifest(null)}
+              >
+                ✕
+              </button>
             </div>
 
-            <form onSubmit={handleImportCustom} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-              <textarea
-                rows={8}
-                value={importJson}
-                onChange={(e) => setImportJson(e.target.value)}
-                placeholder='{ "id": "my-custom-plugin", "name": "My Plugin", "version": "1.0.0", "category": "Utility", "permissions": ["audio:read"], "author": "Studio Dev" }'
-                style={{
-                  width: '100%',
-                  padding: 'var(--space-2)',
-                  backgroundColor: 'var(--color-bg)',
-                  border: '1px solid var(--color-border)',
-                  borderRadius: 'var(--radius-sm)',
-                  color: 'var(--color-text-primary)',
-                  fontFamily: 'monospace',
-                  fontSize: 'var(--text-small)',
-                  boxSizing: 'border-box',
-                }}
-              />
+            <pre
+              style={{
+                margin: 0,
+                background: 'var(--ws-panel-2)',
+                border: '1px solid var(--ws-line)',
+                borderRadius: '5px',
+                padding: '12px',
+                fontSize: '11px',
+                fontFamily: 'var(--font-mono)',
+                maxHeight: '360px',
+                overflowY: 'auto',
+                color: 'var(--ws-text)',
+              }}
+            >
+              {JSON.stringify(inspectedManifest, null, 2)}
+            </pre>
 
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 'var(--space-2)' }}>
-                <button
-                  type="button"
-                  onClick={() => setShowImportModal(false)}
-                  style={{
-                    padding: 'var(--space-2) var(--space-4)',
-                    borderRadius: 'var(--radius-sm)',
-                    border: '1px solid var(--color-border)',
-                    backgroundColor: 'transparent',
-                    color: 'var(--color-text-primary)',
-                    cursor: 'pointer',
-                  }}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  style={{
-                    padding: 'var(--space-2) var(--space-4)',
-                    borderRadius: 'var(--radius-sm)',
-                    border: 'none',
-                    backgroundColor: 'var(--color-live)',
-                    color: 'var(--color-live-text)',
-                    fontWeight: 600,
-                    cursor: 'pointer',
-                  }}
-                >
-                  Register & Enable
-                </button>
-              </div>
-            </form>
+            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+              <button
+                type="button"
+                className="ws-secondary-action"
+                onClick={() => setInspectedManifest(null)}
+              >
+                Close
+              </button>
+            </div>
           </div>
         </div>
       )}
-    </div>
+
+      {toastMessage && <div className="ws-toast">{toastMessage}</div>}
+    </section>
   );
 };

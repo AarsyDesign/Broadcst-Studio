@@ -1,277 +1,567 @@
-import type { PluginInstance, PluginManifest } from './types';
+import {
+  AudioMetricsReadout,
+  getExecutionDomain,
+  Plugin,
+  PluginContext,
+  PluginEventMap,
+  PluginEventName,
+  PluginInstance,
+  PluginManifest,
+  PluginRegistrationSource,
+  PluginStateStore,
+  validateManifest,
+} from './types';
+import { permissionManager } from './permissionManager';
+import { uiExtensionManager } from './uiExtensionManager';
+import { controlApi } from '../controlApi';
+import { eventBus } from '../operations/eventBus';
 import { logger } from '../logger';
-import { shoutcastService } from '../shoutcastService';
 import { audioEngine } from '../audioEngine';
 
+/**
+ * Broadcst Studio Plugin Host
+ *
+ * ARCHITECTURAL INTEGRITY & RUNTIME HARDENING:
+ * 1. Default-Deny Permission Boundary: Unknown or unpermitted commands are rejected.
+ * 2. Deterministic Lifecycle: Failed initialize/start transitions to ERROR and enabled=false.
+ * 3. Error Isolation: A crashing plugin is isolated to state=ERROR; unrelated plugins continue.
+ * 4. Listener & Timer Lifecycle: Disabled plugins do not receive events; listeners are purged on disable/uninstall.
+ * 5. Architectural Honesty: Distinguishes Realtime Audio (Domain A: contract/native target) from Non-Realtime (Domain B).
+ */
 class PluginHost {
-  private plugins: Map<string, PluginInstance> = new Map();
+  private instances: Map<string, PluginInstance> = new Map();
+  private storage: Map<string, Map<string, unknown>> = new Map();
+  private utilityTimerId: number | null = null;
   private listeners: Set<(plugins: PluginInstance[]) => void> = new Set();
-  private intervals: Map<string, number> = new Map();
+  private busUnsubscribers: (() => void)[] = [];
+
+  /**
+   * Per-plugin scoped event listeners: pluginId -> (event -> Set<listener>)
+   * Enables complete listener teardown when a plugin is disabled or errors.
+   */
+  private pluginListeners: Map<string, Map<PluginEventName, Set<(payload: any) => void>>> = new Map();
 
   constructor() {
-    this.registerBuiltInPlugins();
+    this.setupApplicationEventBridging();
+    this.startUtilityTicker();
   }
 
-  private registerBuiltInPlugins() {
-    const builtIns: PluginInstance[] = [
-      {
-        manifest: {
-          id: 'plugin-auto-ducking',
-          name: 'Studio Auto-Ducking',
-          version: '1.2.0',
-          author: 'Broadcast Ecosystem Team',
-          description: 'Automatically ducks background music by -12dB when speech activity is detected on mic.',
-          category: 'audio_effect',
-          permissions: ['audio_process'],
-        },
-        status: 'STOPPED',
-        enabled: false,
-        memoryEstimateKb: 124,
-      },
-      {
-        manifest: {
-          id: 'plugin-voice-leveler',
-          name: 'Dynamic Voice Leveler',
-          version: '2.0.1',
-          author: 'AudioDSP Labs',
-          description: 'Multiband voice broadcast leveling to ensure steady loudness and vocal presence.',
-          category: 'audio_effect',
-          permissions: ['audio_process'],
-        },
-        status: 'RUNNING',
-        enabled: true,
-        memoryEstimateKb: 256,
-      },
-      {
-        manifest: {
-          id: 'plugin-now-playing-poller',
-          name: 'Now Playing RSS/JSON Poller',
-          version: '1.0.4',
-          author: 'StreamTools Community',
-          description: 'Periodically polls radio automation software API and updates SHOUTcast ICY metadata.',
-          category: 'metadata',
-          permissions: ['network_out', 'metadata_write'],
-        },
-        status: 'RUNNING',
-        enabled: true,
-        memoryEstimateKb: 96,
-      },
-      {
-        manifest: {
-          id: 'plugin-backup-stream',
-          name: 'Redundant Stream Mirror',
-          version: '0.9.0',
-          author: 'Infrastructure Core',
-          description: 'Forks encoder packets to a secondary standby streaming server for high availability.',
-          category: 'output',
-          permissions: ['network_out'],
-        },
-        status: 'STOPPED',
-        enabled: false,
-        memoryEstimateKb: 180,
-      },
+  /**
+   * Bridges internal workstation events to the public Plugin Event API.
+   */
+  private setupApplicationEventBridging() {
+    // 1. Deck track started -> track.changed
+    const unsubTrack = eventBus.on('deck:track_started', (payload: any) => {
+      this.broadcastPluginEvent('track.changed', {
+        deckId: payload.deckId as 'deck_a' | 'deck_b',
+        title: payload.track?.title || 'Unknown Title',
+        artist: payload.track?.artist || 'Unknown Artist',
+        album: payload.track?.album,
+        durationMs: payload.track?.durationMs || 0,
+      });
+    });
+
+    // 2. Broadcast connected -> broadcast.connected
+    const unsubBcastOn = eventBus.on('broadcast:connected', (payload: any) => {
+      this.broadcastPluginEvent('broadcast.connected', {
+        serverUrl: payload.server,
+        format: 'MP3',
+        bitrateKbps: payload.bitrate || 128,
+        sampleRate: 48000,
+      });
+    });
+
+    // 3. Broadcast disconnected -> broadcast.disconnected
+    const unsubBcastOff = eventBus.on('broadcast:disconnected', (payload: any) => {
+      this.broadcastPluginEvent('broadcast.disconnected', {
+        totalDurationSeconds: payload.durationSeconds || 0,
+      });
+    });
+
+    // 4. Recording started -> recording.started
+    const unsubRecOn = eventBus.on('recording:started', (payload: any) => {
+      this.broadcastPluginEvent('recording.started', {
+        sessionTitle: payload.id,
+        format: 'WAV',
+        sampleRate: 48000,
+      });
+    });
+
+    // 5. Recording stopped -> recording.stopped
+    const unsubRecOff = eventBus.on('recording:stopped', (payload: any) => {
+      this.broadcastPluginEvent('recording.stopped', {
+        sessionId: payload.id,
+        durationSeconds: payload.durationSeconds || 0,
+        filePath: payload.filePath,
+        fileSizeBytes: 0,
+      });
+    });
+
+    // 6. Schedule slot triggered -> schedule.triggered
+    const unsubSched = eventBus.on('schedule:event_started', (payload: any) => {
+      this.broadcastPluginEvent('schedule.triggered', {
+        slotId: payload.event?.id || 'slot',
+        title: payload.event?.title || 'Scheduled Event',
+        scheduledTime: payload.event?.startTime || new Date().toISOString(),
+        action: payload.event?.action || 'PLAY_SHOW',
+      });
+    });
+
+    this.busUnsubscribers = [
+      unsubTrack,
+      unsubBcastOn,
+      unsubBcastOff,
+      unsubRecOn,
+      unsubRecOff,
+      unsubSched,
     ];
-
-    for (const p of builtIns) {
-      this.plugins.set(p.manifest.id, p);
-      if (p.enabled) {
-        this.startPlugin(p.manifest.id);
-      }
-    }
   }
 
-  public getPlugins(): PluginInstance[] {
-    return Array.from(this.plugins.values());
-  }
-
-  public getPlugin(id: string): PluginInstance | undefined {
-    return this.plugins.get(id);
-  }
-
-  public async enablePlugin(id: string): Promise<boolean> {
-    const plugin = this.plugins.get(id);
-    if (!plugin) return false;
-
-    plugin.enabled = true;
-    plugin.errorMessage = undefined;
-    const success = await this.startPlugin(id);
-    this.notify();
-    return success;
-  }
-
-  public async disablePlugin(id: string): Promise<boolean> {
-    const plugin = this.plugins.get(id);
-    if (!plugin) return false;
-
-    plugin.enabled = false;
-    await this.stopPlugin(id);
-    this.notify();
-    return true;
-  }
-
-  private async startPlugin(id: string): Promise<boolean> {
-    const plugin = this.plugins.get(id);
-    if (!plugin) return false;
-
-    plugin.status = 'STARTING';
-    this.notify();
-
-    try {
-      // Safe sandbox execution setup
-      if (id === 'plugin-auto-ducking') {
-        this.runAutoDuckingSandbox(plugin);
-      } else if (id === 'plugin-now-playing-poller') {
-        this.runMetadataPollerSandbox(plugin);
-      } else if (id === 'plugin-voice-leveler') {
-        plugin.status = 'RUNNING';
-      } else {
-        plugin.status = 'RUNNING';
+  /**
+   * Broadcasts a typed application event to registered, ENABLED plugin listeners.
+   * Isolates exceptions so a failure in Plugin A does not crash Plugin B.
+   */
+  private broadcastPluginEvent<E extends PluginEventName>(event: E, payload: PluginEventMap[E]) {
+    this.pluginListeners.forEach((eventMap, pluginId) => {
+      const instance = this.instances.get(pluginId);
+      // Only dispatch to active and enabled plugins
+      if (!instance || !instance.enabled || instance.state !== 'ENABLED') {
+        return;
       }
 
-      logger.info('PluginHost', `Plugin successfully started: ${plugin.manifest.name}`);
-      this.notify();
-      return true;
-    } catch (err: any) {
-      // Failure Isolation: Catch error and isolate plugin without taking down broadcast engine!
-      plugin.status = 'ERROR';
-      plugin.errorMessage = err?.message || 'Failed to start plugin in sandbox';
-      logger.error('PluginHost', `Plugin failure isolated for ${plugin.manifest.name}: ${plugin.errorMessage}`);
-      this.notify();
-      return false;
-    }
-  }
+      const listeners = eventMap.get(event);
+      if (!listeners || listeners.size === 0) return;
 
-  private async stopPlugin(id: string): Promise<boolean> {
-    const plugin = this.plugins.get(id);
-    if (!plugin) return false;
+      listeners.forEach((fn) => {
+        try {
+          fn(payload);
+        } catch (err: any) {
+          logger.error('PluginHost', `Plugin "${pluginId}" crashed in event handler for "${event}"`, {
+            error: err,
+          });
 
-    const interval = this.intervals.get(id);
-    if (interval) {
-      clearInterval(interval);
-      this.intervals.delete(id);
-    }
+          // Isolate error strictly to this plugin
+          instance.state = 'ERROR';
+          instance.enabled = false;
+          instance.errorMessage = `Unhandled error in event handler "${event}": ${err?.message || String(err)}`;
 
-    plugin.status = 'STOPPED';
-    logger.info('PluginHost', `Plugin stopped: ${plugin.manifest.name}`);
-    this.notify();
-    return true;
-  }
+          // Purge this plugin's listeners immediately
+          this.cleanupPluginListeners(pluginId);
 
-  // Crash simulation to test failure isolation per architecture.md!
-  public simulateCrash(id: string) {
-    const plugin = this.plugins.get(id);
-    if (!plugin) return;
-
-    const interval = this.intervals.get(id);
-    if (interval) {
-      clearInterval(interval);
-      this.intervals.delete(id);
-    }
-
-    plugin.status = 'CRASHED';
-    plugin.errorMessage = 'Simulated uncaught exception in worker thread: OutOfBoundsMemoryAccess';
-    logger.error('PluginHost', `Isolated Crash Event on '${plugin.manifest.name}'. Core audio engine remains 100% operational.`);
-    this.notify();
-  }
-
-  private runAutoDuckingSandbox(plugin: PluginInstance) {
-    plugin.status = 'RUNNING';
-
-    // Auto-ducking loop monitoring mic channel
-    const interval = window.setInterval(() => {
-      if (plugin.status !== 'RUNNING') return;
-
-      const mixer = audioEngine.getMixerState();
-      const micChannel = mixer.channels.find((c) => c.id === 'mic');
-      const musicChannel = mixer.channels.find((c) => c.id === 'music');
-
-      if (micChannel && musicChannel) {
-        // If voice peak is above -35 dBFS, duck music to 0.35, otherwise restore to 0.70
-        const isSpeaking = micChannel.peakDb > -35;
-        const targetFader = isSpeaking ? 0.35 : 0.7;
-
-        if (Math.abs(musicChannel.faderLevel - targetFader) > 0.05) {
-          audioEngine.setChannelFader('music', targetFader);
+          this.broadcastPluginEvent('plugin.error', {
+            pluginId,
+            timestamp: Date.now(),
+            state: 'ERROR',
+            details: instance.errorMessage,
+          });
+          this.notify();
         }
-      }
-    }, 200);
-
-    this.intervals.set(plugin.manifest.id, interval);
+      });
+    });
   }
 
-  private runMetadataPollerSandbox(plugin: PluginInstance) {
-    plugin.status = 'RUNNING';
+  /**
+   * Cleans up all event listeners registered by a specific plugin.
+   */
+  private cleanupPluginListeners(pluginId: string) {
+    this.pluginListeners.delete(pluginId);
+  }
 
-    const sampleTracks = [
-      { title: 'Kajian Tauhid Bagian 1', artist: 'Ustadz Pembicara' },
-      { title: 'Tadabbur Al-Quran Juz 30', artist: 'Qari Pilihan' },
-      { title: 'Bincang Siang Nusantara', artist: 'Studio Broadcaster' },
-      { title: 'Muhasabah dan Doa Bersama', artist: 'Majelis Siaran' },
-    ];
-    let trackIdx = 0;
+  /**
+   * Periodic background ticker for domain B UTILITY plugins.
+   */
+  private startUtilityTicker() {
+    if (typeof window === 'undefined') return;
+    this.utilityTimerId = window.setInterval(() => {
+      this.instances.forEach((instance) => {
+        if (instance.enabled && instance.state === 'ENABLED' && instance.manifest.type === 'UTILITY') {
+          const utility = instance.plugin as any;
+          if (utility && typeof utility.tick === 'function') {
+            try {
+              const ctx = this.createPluginContext(instance.manifest);
+              utility.tick(ctx);
+              instance.lastExecutionMs = Date.now();
+            } catch (err: any) {
+              logger.error('PluginHost', `Utility plugin "${instance.manifest.id}" tick exception`, {
+                error: err,
+              });
+              instance.state = 'ERROR';
+              instance.enabled = false;
+              instance.errorMessage = `Utility tick exception: ${err?.message || String(err)}`;
+              this.cleanupPluginListeners(instance.manifest.id);
+              this.notify();
+            }
+          }
+        }
+      });
+    }, 1000);
+  }
 
-    const interval = window.setInterval(() => {
-      if (plugin.status !== 'RUNNING') return;
+  /**
+   * Creates an isolated execution context for a plugin instance.
+   * Gated by default-deny permissions and scoped logging/state.
+   */
+  public createPluginContext(manifest: PluginManifest): PluginContext {
+    const pluginId = manifest.id;
 
-      // Only update metadata if broadcast is ON AIR
-      const bStatus = shoutcastService.getStatus();
-      if (bStatus.state === 'CONNECTED') {
-        const trk = sampleTracks[trackIdx % sampleTracks.length];
-        shoutcastService.setMetadata({
-          title: trk.title,
-          artist: trk.artist,
-          stationName: bStatus.config.stationName,
+    // Scoped session in-memory state store
+    let storeMap = this.storage.get(pluginId);
+    if (!storeMap) {
+      storeMap = new Map();
+      this.storage.set(pluginId, storeMap);
+    }
+
+    const stateStore: PluginStateStore = {
+      get: <T = unknown>(key: string, defaultValue?: T): T | undefined => {
+        return (storeMap!.get(key) as T) ?? defaultValue;
+      },
+      set: <T = unknown>(key: string, value: T): void => {
+        storeMap!.set(key, value);
+      },
+      delete: (key: string): void => {
+        storeMap!.delete(key);
+      },
+      clear: (): void => {
+        storeMap!.clear();
+      },
+    };
+
+    // Scoped logger
+    const scopedLogger = {
+      debug: (msg: string, meta?: unknown) =>
+        logger.debug(`Plugin[${pluginId}]`, msg, meta as Record<string, unknown> | undefined),
+      info: (msg: string, meta?: unknown) =>
+        logger.info(`Plugin[${pluginId}]`, msg, meta as Record<string, unknown> | undefined),
+      warn: (msg: string, meta?: unknown) =>
+        logger.warn(`Plugin[${pluginId}]`, msg, meta as Record<string, unknown> | undefined),
+      error: (msg: string, meta?: unknown) =>
+        logger.error(`Plugin[${pluginId}]`, msg, meta as Record<string, unknown> | undefined),
+    };
+
+    // Scoped event bus (isolated per plugin)
+    const scopedEvents = {
+      on: <E extends PluginEventName>(event: E, listener: (payload: PluginEventMap[E]) => void): (() => void) => {
+        let pluginMap = this.pluginListeners.get(pluginId);
+        if (!pluginMap) {
+          pluginMap = new Map();
+          this.pluginListeners.set(pluginId, pluginMap);
+        }
+        if (!pluginMap.has(event)) {
+          pluginMap.set(event, new Set());
+        }
+        pluginMap.get(event)!.add(listener);
+
+        return () => {
+          pluginMap?.get(event)?.delete(listener);
+        };
+      },
+      emit: <E extends PluginEventName>(event: E, payload: PluginEventMap[E]) => {
+        this.broadcastPluginEvent(event, payload);
+      },
+    };
+
+    // Scoped command executor (FAIL-CLOSED: Default-Deny)
+    const scopedCommands = {
+      execute: async <TResult = unknown>(command: string, params?: unknown): Promise<TResult> => {
+        const auth = permissionManager.verifyCommand(pluginId, manifest.permissions, command);
+        if (!auth.allowed) {
+          throw new Error(
+            auth.reason || `Permission Denied: Plugin "${pluginId}" is not authorized to execute command "${command}".`
+          );
+        }
+
+        // Map short command aliases to controlApi actions
+        let cmdToRun = command;
+        if (command === 'NEXT_TRACK') cmdToRun = 'control.action.next_track';
+        if (command === 'PLAY_DECK') cmdToRun = 'deck.play';
+        if (command === 'START_RECORDING') cmdToRun = 'recording.start';
+        if (command === 'STOP_RECORDING') cmdToRun = 'recording.stop';
+
+        try {
+          const res = await controlApi.execute(cmdToRun as any, params, 'AUTOMATION');
+          if (!res.success) {
+            throw new Error(res.error || `Command "${command}" execution failed.`);
+          }
+          return res.data as TResult;
+        } catch (err: any) {
+          throw new Error(`Command execution error: ${err?.message || String(err)}`);
+        }
+      },
+    };
+
+    // Metrics readout (if audio.read permission is granted)
+    const getAudioMetrics = (): AudioMetricsReadout => {
+      const hasPermission = permissionManager.hasPermission(manifest.permissions, 'audio.read');
+      if (!hasPermission) {
+        throw new Error(`Permission Denied: Plugin "${pluginId}" requires "audio.read" to access audio metrics.`);
+      }
+      const mixerState = audioEngine.getMixerState();
+      const peak = mixerState.masterPeakDb || -90;
+      const rms = mixerState.masterRmsDb || -90;
+      return {
+        peakDb: peak,
+        rmsDb: rms,
+        isClipping: peak >= 0,
+      };
+    };
+
+    // Scoped UI Extension Controller
+    const uiController = {
+      registerPanel: (descriptor: any) => {
+        const hasPermission = permissionManager.hasPermission(manifest.permissions, 'ui.contribute');
+        if (!hasPermission) {
+          throw new Error(
+            `Permission Denied: Plugin "${pluginId}" requires "ui.contribute" to register UI extensions.`
+          );
+        }
+        return uiExtensionManager.registerDescriptor({
+          ...descriptor,
+          pluginId,
         });
-        trackIdx++;
-      }
-    }, 45000); // every 45s
+      },
+      getRegistrations: () => {
+        return uiExtensionManager.getPluginExtensions(pluginId);
+      },
+    };
 
-    this.intervals.set(plugin.manifest.id, interval);
+    return {
+      manifest,
+      logger: scopedLogger,
+      events: scopedEvents,
+      commands: scopedCommands,
+      state: stateStore,
+      ui: uiController,
+      getAudioMetrics,
+    };
   }
 
-  public async registerPlugin(manifest: PluginManifest): Promise<PluginInstance> {
-    const existing = this.plugins.get(manifest.id);
+  /**
+   * Registers a new plugin instance in the host.
+   */
+  public async registerPlugin(
+    manifestCandidate: unknown,
+    pluginImpl?: Plugin,
+    registrationSource: PluginRegistrationSource = 'DEV_DIRECT_REGISTRATION'
+  ): Promise<{ success: boolean; instance?: PluginInstance; error?: string }> {
+    const valResult = validateManifest(manifestCandidate);
+    if (!valResult.valid || !valResult.manifest) {
+      return {
+        success: false,
+        error: `Manifest Validation Failed: ${valResult.errors.join('; ')}`,
+      };
+    }
+
+    const manifest = valResult.manifest;
+    const existing = this.instances.get(manifest.id);
     if (existing) {
-      existing.manifest = manifest;
-      this.notify();
-      return existing;
+      logger.info('PluginHost', `Overwriting existing plugin registration: ${manifest.id}`);
+      await this.disablePlugin(manifest.id);
     }
 
     const instance: PluginInstance = {
       manifest,
-      status: 'STOPPED',
+      state: 'READY',
+      compatibility: valResult.compatibility,
       enabled: false,
-      memoryEstimateKb: 128,
+      plugin: pluginImpl,
+      installedAt: Date.now(),
+      validationWarnings: valResult.warnings,
+      runtimeMode: 'in_process_prototype',
+      registrationSource,
+      executionDomain: getExecutionDomain(manifest.type),
     };
-    this.plugins.set(manifest.id, instance);
+
+    this.instances.set(manifest.id, instance);
+    this.broadcastPluginEvent('plugin.installed', {
+      pluginId: manifest.id,
+      timestamp: Date.now(),
+      state: 'READY',
+    });
     this.notify();
-    logger.info('PluginHost', `Registered plugin: ${manifest.name} (${manifest.id})`);
-    return instance;
+
+    return { success: true, instance };
   }
 
-  public async unregisterPlugin(id: string): Promise<boolean> {
-    if (!this.plugins.has(id)) return false;
-    await this.disablePlugin(id);
-    this.plugins.delete(id);
+  public async unregisterPlugin(pluginId: string): Promise<boolean> {
+    const instance = this.instances.get(pluginId);
+    if (!instance) return false;
+
+    if (instance.enabled) {
+      await this.disablePlugin(pluginId);
+    }
+
+    this.cleanupPluginListeners(pluginId);
+    uiExtensionManager.cleanupPluginExtensions(pluginId);
+
+    if (instance.plugin && typeof instance.plugin.dispose === 'function') {
+      try {
+        await instance.plugin.dispose();
+      } catch (e) {
+        logger.warn('PluginHost', `Plugin dispose error: ${pluginId}`, { error: e });
+      }
+    }
+
+    instance.state = 'UNINSTALLED';
+    this.instances.delete(pluginId);
+    this.storage.delete(pluginId);
     this.notify();
-    logger.info('PluginHost', `Unregistered plugin: ${id}`);
     return true;
+  }
+
+  /**
+   * Enables a plugin with strict entrypoint validation and deterministic error state.
+   */
+  public async enablePlugin(pluginId: string): Promise<boolean> {
+    const instance = this.instances.get(pluginId);
+    if (!instance) return false;
+
+    // Entrypoint validation: require a concrete runtime implementation
+    if (!instance.plugin) {
+      instance.state = 'ERROR';
+      instance.enabled = false;
+      instance.errorMessage = 'Manifest valid, plugin runtime entrypoint unavailable.';
+      this.notify();
+      logger.warn('PluginHost', `Cannot enable plugin "${pluginId}": runtime entrypoint unavailable.`);
+      return false;
+    }
+
+    try {
+      instance.state = 'VALIDATING';
+      this.notify();
+
+      const context = this.createPluginContext(instance.manifest);
+
+      if (typeof instance.plugin.initialize === 'function') {
+        await instance.plugin.initialize(context);
+      }
+      if (typeof instance.plugin.start === 'function') {
+        await instance.plugin.start();
+      }
+
+      instance.enabled = true;
+      instance.state = 'ENABLED';
+      instance.errorMessage = undefined;
+      instance.lastExecutionMs = Date.now();
+
+      this.broadcastPluginEvent('plugin.enabled', {
+        pluginId,
+        timestamp: Date.now(),
+        state: 'ENABLED',
+      });
+      this.notify();
+      logger.info('PluginHost', `Plugin enabled: ${instance.manifest.name} (${pluginId})`);
+      return true;
+    } catch (err: any) {
+      // Deterministic failure: state = ERROR, enabled = false, purge listeners
+      instance.state = 'ERROR';
+      instance.enabled = false;
+      instance.errorMessage = err?.message || String(err);
+      this.cleanupPluginListeners(pluginId);
+
+      this.broadcastPluginEvent('plugin.error', {
+        pluginId,
+        timestamp: Date.now(),
+        state: 'ERROR',
+        details: instance.errorMessage,
+      });
+      this.notify();
+      logger.error('PluginHost', `Failed enabling plugin "${pluginId}"`, { error: err });
+      return false;
+    }
+  }
+
+  /**
+   * Disables a plugin, stops background workers, and tears down all event listeners.
+   */
+  public async disablePlugin(pluginId: string): Promise<boolean> {
+    const instance = this.instances.get(pluginId);
+    if (!instance) return false;
+
+    try {
+      if (instance.plugin && typeof (instance.plugin as any).stopOutput === 'function') {
+        try {
+          await (instance.plugin as any).stopOutput();
+        } catch (e) {
+          logger.warn('PluginHost', `Plugin stopOutput error: ${pluginId}`, { error: e });
+        }
+      }
+
+      if (instance.plugin && typeof instance.plugin.stop === 'function') {
+        await instance.plugin.stop();
+      }
+
+      instance.enabled = false;
+      instance.state = 'DISABLED';
+      this.cleanupPluginListeners(pluginId);
+      uiExtensionManager.cleanupPluginExtensions(pluginId);
+
+      this.broadcastPluginEvent('plugin.disabled', {
+        pluginId,
+        timestamp: Date.now(),
+        state: 'DISABLED',
+      });
+      this.notify();
+      logger.info('PluginHost', `Plugin disabled: ${instance.manifest.name} (${pluginId})`);
+      return true;
+    } catch (err: any) {
+      // Failure to disable cleanly moves to ERROR
+      instance.state = 'ERROR';
+      instance.enabled = false;
+      instance.errorMessage = `Disable error: ${err?.message || String(err)}`;
+      this.cleanupPluginListeners(pluginId);
+      uiExtensionManager.cleanupPluginExtensions(pluginId);
+      this.notify();
+      logger.error('PluginHost', `Failed disabling plugin "${pluginId}"`, { error: err });
+      return false;
+    }
+  }
+
+  /**
+   * Reloads a plugin without restarting the application.
+   */
+  public async reloadPlugin(pluginId: string): Promise<boolean> {
+    const instance = this.instances.get(pluginId);
+    if (!instance) return false;
+    logger.info('PluginHost', `Reloading plugin: ${pluginId}`);
+    await this.disablePlugin(pluginId);
+    return await this.enablePlugin(pluginId);
+  }
+
+  public getPlugins(): PluginInstance[] {
+    return Array.from(this.instances.values());
+  }
+
+  public getPlugin(id: string): PluginInstance | undefined {
+    return this.instances.get(id);
   }
 
   public subscribe(listener: (plugins: PluginInstance[]) => void): () => void {
     this.listeners.add(listener);
-    return () => this.listeners.delete(listener);
+    listener(this.getPlugins());
+    return () => {
+      this.listeners.delete(listener);
+    };
   }
 
   private notify() {
     const list = this.getPlugins();
-    this.listeners.forEach((listener) => {
+    this.listeners.forEach((l) => {
       try {
-        listener(list);
+        l(list);
       } catch (err) {
-        logger.error('PluginHost', 'Error in plugin host listener', { error: err });
+        logger.error('PluginHost', 'Error in plugin listener callback', { error: err });
       }
     });
+  }
+
+  public dispose() {
+    if (this.utilityTimerId !== null) {
+      clearInterval(this.utilityTimerId);
+      this.utilityTimerId = null;
+    }
+    this.pluginListeners.clear();
+    this.busUnsubscribers.forEach((unsub) => unsub());
+    this.busUnsubscribers = [];
   }
 }
 

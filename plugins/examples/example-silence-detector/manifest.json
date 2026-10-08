@@ -1,0 +1,17 @@
+{
+  "id": "org.broadcst.example.silence-detector",
+  "name": "Silence Guard & Emergency Failover",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "author": "Broadcst Community Examples",
+  "description": "Example utility plugin demonstrating periodic background audio health analysis and emergency failover action.",
+  "type": "UTILITY",
+  "permissions": [
+    "audio.read",
+    "automation.execute"
+  ],
+  "entryPoint": "index.ts",
+  "homepage": "https://github.com/AarsyDesign/Broadcst-Studio",
+  "license": "MIT",
+  "tags": ["utility", "silence", "failover", "watchdog", "health"]
+}
