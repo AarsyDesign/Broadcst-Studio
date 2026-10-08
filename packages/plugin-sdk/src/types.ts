@@ -187,6 +187,9 @@ export interface OutputDiagnostics {
   droppedFrames?: number;
   latencyMs?: number;
   reason?: string;
+  nativeSinkState?: string;
+  framesWritten?: number;
+  errorsCount?: number;
 }
 
 /**

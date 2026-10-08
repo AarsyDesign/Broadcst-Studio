@@ -8,6 +8,7 @@ import {
   validateManifest,
 } from '../services/plugin/types';
 import { outputRouter, PluginOutputTarget } from '../services/plugin/outputRouter';
+import { NativeMediaSinkStatus } from '../types/ipc';
 import { PluginUISlotRenderer } from './PluginUISlotRenderer';
 
 export const PluginsWorkspace: React.FC = () => {
@@ -15,6 +16,7 @@ export const PluginsWorkspace: React.FC = () => {
   const [plugins, setPlugins] = useState<PluginInstance[]>(pluginHost.getPlugins());
   const [samples, setSamples] = useState<SamplePluginEntry[]>(pluginRegistry.getAvailableSamples());
   const [pluginOutputs, setPluginOutputs] = useState<PluginOutputTarget[]>(() => outputRouter.getPluginOutputs());
+  const [nativeSinks, setNativeSinks] = useState<NativeMediaSinkStatus[]>(() => outputRouter.getNativeSinks());
   const [selectedType, setSelectedType] = useState<string>('all');
   const [selectedStatus, setSelectedStatus] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -36,6 +38,7 @@ export const PluginsWorkspace: React.FC = () => {
 
     const unsubOut = outputRouter.subscribe(() => {
       setPluginOutputs(outputRouter.getPluginOutputs());
+      setNativeSinks(outputRouter.getNativeSinks());
     });
 
     return () => {
@@ -608,9 +611,9 @@ export const PluginsWorkspace: React.FC = () => {
           >
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <strong style={{ fontSize: '13px', color: 'var(--ws-text)' }}>
-                Registered Audio Syndication Targets ({pluginOutputs.length + 1})
+                Registered Audio Sinks & Syndication Targets ({pluginOutputs.length + 2})
               </strong>
-              <span className="ws-tag">1 NATIVE + {pluginOutputs.length} PLUGINS</span>
+              <span className="ws-tag">2 NATIVE SINKS + {pluginOutputs.length} PLUGINS</span>
             </div>
 
             {/* Native SHOUTcast summary row */}
@@ -631,11 +634,120 @@ export const PluginsWorkspace: React.FC = () => {
                   <span className="ws-tag" style={{ color: 'var(--ws-live)' }}>NATIVE CORE</span>
                 </div>
                 <div style={{ fontSize: '10.5px', color: 'var(--ws-muted)', marginTop: '2px', fontFamily: 'var(--font-mono)' }}>
-                  Primary high-performance MP3 broadcast encoder & transmitter
+                  Primary high-performance MP3 broadcast encoder & transmitter (Dedicated worker thread)
                 </div>
               </div>
               <span className="ws-badge" data-variant="live">CORE RUNTIME</span>
             </div>
+
+            {/* Native Reference MediaSink Developer Diagnostic Row */}
+            {(() => {
+              const refSink = nativeSinks.find((s) => s.id === 'ref-diagnostic-sink');
+              const isRefRunning = Boolean(refSink && refSink.state === 'STREAMING');
+              const isRefError = Boolean(refSink && refSink.state === 'ERROR');
+
+              return (
+                <div
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '8px',
+                    padding: '10px 12px',
+                    background: 'var(--ws-panel-2)',
+                    border: '1px solid var(--ws-line)',
+                    borderRadius: '6px',
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <strong style={{ fontSize: '12px', color: 'var(--ws-text)' }}>
+                          Master Audio Reference Tap
+                        </strong>
+                        <span className="ws-tag" style={{ color: 'var(--ws-accent)' }}>
+                          DIAGNOSTIC MODE
+                        </span>
+                      </div>
+                      <div style={{ fontSize: '10.5px', color: 'var(--ws-muted)', marginTop: '2px', fontFamily: 'var(--font-mono)' }}>
+                        Native MediaSink lock-free PCM tap (48kHz stereo f32) consuming real master blocks without network
+                      </div>
+                    </div>
+
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span
+                        className="ws-badge"
+                        data-variant={isRefRunning ? 'live' : isRefError ? 'danger' : 'neutral'}
+                        style={{
+                          color: isRefRunning ? 'var(--ws-accent)' : undefined,
+                          borderColor: isRefRunning ? 'var(--ws-accent)' : undefined,
+                        }}
+                      >
+                        {refSink ? refSink.state : 'INACTIVE'}
+                      </span>
+                      <button
+                        type="button"
+                        className={isRefRunning ? 'ws-secondary-action' : 'ws-primary-action'}
+                        style={{ height: '28px', fontSize: '10.5px' }}
+                        onClick={async () => {
+                          if (refSink) {
+                            await outputRouter.unregisterNativeSink('ref-diagnostic-sink');
+                            showToast('Unregistered Master Audio Reference Tap');
+                          } else {
+                            await outputRouter.registerReferenceMediaSink(
+                              'ref-diagnostic-sink',
+                              'Master Audio Reference Tap'
+                            );
+                            showToast('Registered Master Audio Reference Tap');
+                          }
+                        }}
+                      >
+                        {refSink ? 'Disable Tap' : 'Enable Diagnostic Tap'}
+                      </button>
+                    </div>
+                  </div>
+
+                  {refSink && (
+                    <div
+                      style={{
+                        padding: '6px 8px',
+                        background: 'var(--ws-panel-3)',
+                        borderRadius: '4px',
+                        display: 'flex',
+                        flexWrap: 'wrap',
+                        gap: '16px',
+                        fontSize: '10px',
+                        fontFamily: 'var(--font-mono)',
+                        color: 'var(--ws-muted)',
+                      }}
+                    >
+                      <span>
+                        Frames Written:{' '}
+                        <strong style={{ color: 'var(--ws-text)' }}>
+                          {refSink.frames_written.toLocaleString()}
+                        </strong>
+                      </span>
+                      <span>
+                        Dropped Frames:{' '}
+                        <strong style={{ color: refSink.dropped_frames > 0 ? 'var(--ws-warning)' : 'var(--ws-text)' }}>
+                          {refSink.dropped_frames}
+                        </strong>
+                      </span>
+                      <span>
+                        Buffer Policy:{' '}
+                        <strong style={{ color: 'var(--ws-text)' }}>
+                          Bounded Lock-Free (64 Blocks / 640ms)
+                        </strong>
+                      </span>
+                      {refSink.error_message && (
+                        <span style={{ color: 'var(--ws-danger)' }}>
+                          Error: {refSink.error_message}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
 
             {/* Plugin Output Targets */}
             {pluginOutputs.map((target) => {
@@ -750,6 +862,18 @@ export const PluginsWorkspace: React.FC = () => {
                         <span style={{ color: 'var(--ws-muted)' }}>Health:</span>{' '}
                         <strong style={{ color: 'var(--ws-text)' }}>{target.status.health || 'REFERENCE'}</strong>
                       </div>
+                      <div>
+                        <span style={{ color: 'var(--ws-muted)' }}>Native Sink State:</span>{' '}
+                        <strong style={{ color: target.nativeSink ? 'var(--ws-accent)' : 'var(--ws-muted)' }}>
+                          {target.nativeSink?.state || target.status.diagnostics?.nativeSinkState || 'No native sink'}
+                        </strong>
+                      </div>
+                      <div>
+                        <span style={{ color: 'var(--ws-muted)' }}>Dropped Frames:</span>{' '}
+                        <strong style={{ color: (target.nativeSink?.dropped_frames ?? target.status.diagnostics?.droppedFrames ?? 0) > 0 ? 'var(--ws-warning)' : 'var(--ws-text)' }}>
+                          {target.nativeSink?.dropped_frames ?? target.status.diagnostics?.droppedFrames ?? 0}
+                        </strong>
+                      </div>
                       {target.status.retryPolicy && (
                         <div style={{ gridColumn: '1 / -1' }}>
                           <span style={{ color: 'var(--ws-muted)' }}>Retry Policy:</span>{' '}
@@ -759,9 +883,9 @@ export const PluginsWorkspace: React.FC = () => {
                           </strong>
                         </div>
                       )}
-                      {target.status.diagnostics?.reason && (
-                        <div style={{ gridColumn: '1 / -1', color: 'var(--ws-muted)' }}>
-                          Diagnostic Note: {target.status.diagnostics.reason}
+                      {(target.nativeSink?.error_message || target.status.diagnostics?.reason) && (
+                        <div style={{ gridColumn: '1 / -1', color: 'var(--ws-danger)' }}>
+                          Error: {target.nativeSink?.error_message || target.status.diagnostics?.reason}
                         </div>
                       )}
                     </div>

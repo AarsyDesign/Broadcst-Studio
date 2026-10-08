@@ -13,6 +13,7 @@ type EventHandler<T> = (payload: T) => void;
 class IPCService {
   private isTauriAvailable = false;
   private eventListeners: Map<string, Set<EventHandler<any>>> = new Map();
+  private fallbackMediaSinks: Map<string, import('../types/ipc').NativeMediaSinkStatus> = new Map();
 
   constructor() {
     this.checkTauriAvailability();
@@ -383,6 +384,47 @@ class IPCService {
           shoutcastService.setMetadata(params.metadata);
         }
         return undefined;
+      }
+
+      case 'native_output.get_sinks': {
+        return Array.from(this.fallbackMediaSinks.values());
+      }
+
+      case 'native_output.register_reference_sink': {
+        const { id, name } = params as { id: string; name: string };
+        this.fallbackMediaSinks.set(id, {
+          id,
+          name,
+          state: 'STREAMING',
+          is_streaming: true,
+          frames_written: 0,
+          bytes_sent: 0,
+          dropped_frames: 0,
+          errors_count: 0,
+        });
+        return undefined;
+      }
+
+      case 'native_output.register_rtmp_sink': {
+        const { id, name, endpoint } = params as { id: string; name: string; endpoint: string };
+        this.fallbackMediaSinks.set(id, {
+          id,
+          name,
+          state: 'OPENED',
+          is_streaming: false,
+          frames_written: 0,
+          bytes_sent: 0,
+          dropped_frames: 0,
+          errors_count: 0,
+          endpoint,
+        });
+        return undefined;
+      }
+
+      case 'native_output.unregister_sink': {
+        const { id } = params as { id: string };
+        const existed = this.fallbackMediaSinks.delete(id);
+        return existed;
       }
 
       default:

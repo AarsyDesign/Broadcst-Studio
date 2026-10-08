@@ -2,6 +2,8 @@ import { OutputPlugin, OutputStatus, PluginInstance } from './types';
 import { pluginHost } from './pluginHost';
 import { eventBus } from '../operations/eventBus';
 import { logger } from '../logger';
+import { ipc } from '../ipc';
+import { NativeMediaSinkStatus } from '../../types/ipc';
 
 export interface PluginOutputTarget {
   pluginId: string;
@@ -9,6 +11,7 @@ export interface PluginOutputTarget {
   enabled: boolean;
   status: OutputStatus;
   plugin: OutputPlugin;
+  nativeSink?: NativeMediaSinkStatus;
 }
 
 /**
@@ -18,9 +21,9 @@ export interface PluginOutputTarget {
  * MASTER AUDIO (Domain A - Rust Realtime AudioEngine)
  *     ↓
  * NATIVE OUTPUT ROUTER (Rust Native Media Sinks)
- *     ├── Native SHOUTcast Stream (MP3 Direct TCP)
- *     ├── Native Master Recorder (WAV Capture)
- *     └── Plugin-Backed Native Media Sinks (RTMP / HLS / WebRTC)
+ *     ├── Native SHOUTcast Stream (MP3 Direct TCP via EncoderWorker)
+ *     ├── Native Master Recorder (WAV Capture via MasterRecorder)
+ *     └── Native Media Sinks (ReferenceMediaSink / RtmpMediaSink / Plugin Sinks)
  *
  * CONTROL & METADATA DOMAIN (Domain B - TypeScript / Non-Realtime Async):
  *     ↓
@@ -28,18 +31,110 @@ export interface PluginOutputTarget {
  *     ├── Target Discovery & Capability Inspection
  *     ├── Lifecycle & Command Routing (output.start / output.stop)
  *     ├── Metadata Forwarding (Track title & artist ICY sync)
+ *     ├── Native Media Sink State Bridge (Authoritative for transport)
  *     └── Status & Telemetry Aggregation
  *
  * STRICT REALTIME BOUNDARY:
  * - Raw PCM frames are NEVER copied or routed through JavaScript, React, or event buses.
+ * - Master PCM blocks (48kHz, stereo, f32) are dispatched exclusively in native Rust.
  * - "Plugin enabled" (host lifecycle) != "Output connected" (media streaming).
+ * - Realtime audio callback is lock-free and bounded; never blocks on sinks or I/O.
  */
 class OutputRouter {
   private subscribers: Set<() => void> = new Set();
   private busUnsub: (() => void) | null = null;
+  private nativeSinks: Map<string, NativeMediaSinkStatus> = new Map();
+  private pollTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor() {
     this.setupMetadataForwarding();
+    this.startNativeSinkPolling();
+  }
+
+  /**
+   * Starts periodic polling of native media sink metrics from Rust backend.
+   */
+  private startNativeSinkPolling() {
+    this.refreshNativeSinks().catch(() => {});
+    this.pollTimer = setInterval(() => {
+      this.refreshNativeSinks().catch(() => {});
+    }, 1500);
+  }
+
+  /**
+   * Polls authoritative live native media sink statuses from Tauri IPC.
+   */
+  public async refreshNativeSinks(): Promise<NativeMediaSinkStatus[]> {
+    try {
+      const sinks = await ipc.invoke('native_output.get_sinks');
+      if (Array.isArray(sinks)) {
+        this.nativeSinks.clear();
+        for (const s of sinks) {
+          this.nativeSinks.set(s.id, s);
+        }
+        this.notify();
+        return sinks;
+      }
+    } catch (err) {
+      logger.debug('OutputRouter', 'Native sink query skipped or failed', { error: err });
+    }
+    return Array.from(this.nativeSinks.values());
+  }
+
+  /**
+   * Returns current snapshot of all active native media sinks.
+   */
+  public getNativeSinks(): NativeMediaSinkStatus[] {
+    return Array.from(this.nativeSinks.values());
+  }
+
+  /**
+   * Registers a native ReferenceMediaSink developer diagnostic tap.
+   * Consumes real master PCM directly from AudioEngine without external network transport.
+   */
+  public async registerReferenceMediaSink(
+    id: string = 'ref-diagnostic-sink',
+    name: string = 'Master Audio Reference Tap'
+  ): Promise<boolean> {
+    try {
+      await ipc.invoke('native_output.register_reference_sink', { id, name });
+      await this.refreshNativeSinks();
+      logger.info('OutputRouter', `Registered native reference diagnostic sink: ${id}`);
+      return true;
+    } catch (err) {
+      logger.error('OutputRouter', `Failed to register reference sink "${id}"`, { error: err });
+      return false;
+    }
+  }
+
+  /**
+   * Registers a native RTMP media sink with target endpoint.
+   */
+  public async registerRtmpSink(id: string, name: string, endpoint: string): Promise<boolean> {
+    try {
+      await ipc.invoke('native_output.register_rtmp_sink', { id, name, endpoint });
+      await this.refreshNativeSinks();
+      logger.info('OutputRouter', `Registered native RTMP sink: ${id} -> ${endpoint}`);
+      return true;
+    } catch (err) {
+      logger.error('OutputRouter', `Failed to register native RTMP sink "${id}"`, { error: err });
+      return false;
+    }
+  }
+
+  /**
+   * Unregisters and terminates an active native media sink.
+   */
+  public async unregisterNativeSink(id: string): Promise<boolean> {
+    try {
+      const ok = await ipc.invoke('native_output.unregister_sink', { id });
+      await this.refreshNativeSinks();
+      logger.info('OutputRouter', `Unregistered native sink: ${id}`);
+      return Boolean(ok);
+    } catch (err) {
+      logger.error('OutputRouter', `Failed to unregister native sink "${id}"`, { error: err });
+      return false;
+    }
   }
 
   /**
@@ -68,7 +163,8 @@ class OutputRouter {
   }
 
   /**
-   * Retrieves all registered plugins categorized as type 'OUTPUT'.
+   * Retrieves all registered plugins categorized as type 'OUTPUT',
+   * bridged with authoritative native media sink status if available.
    */
   public getPluginOutputs(): PluginOutputTarget[] {
     const plugins = pluginHost.getPlugins();
@@ -93,12 +189,45 @@ class OutputRouter {
           pluginEnabled: inst.enabled,
         };
 
+        // Bridge to native media sink if one is registered for this plugin
+        const nativeSink = this.nativeSinks.get(inst.manifest.id);
+        if (nativeSink) {
+          // Native media sink state is AUTHORITATIVE for real media transport
+          if (nativeSink.state === 'STREAMING') {
+            status.state = 'CONNECTED';
+            status.transportRunning = true;
+            status.health = 'HEALTHY';
+          } else if (nativeSink.state === 'ERROR') {
+            status.state = 'ERROR';
+            status.transportRunning = false;
+            status.health = 'ERROR';
+            status.error = nativeSink.error_message || 'Native sink transport failure';
+          } else if (nativeSink.state === 'OPENED' || nativeSink.state === 'FLUSHING') {
+            status.state = 'READY';
+            status.transportRunning = false;
+          } else if (nativeSink.state === 'STOPPED' || nativeSink.state === 'CLOSED') {
+            status.state = 'DISCONNECTED';
+            status.transportRunning = false;
+          }
+
+          status.diagnostics = {
+            ...status.diagnostics,
+            bytesSent: nativeSink.bytes_sent,
+            droppedFrames: nativeSink.dropped_frames,
+            framesWritten: nativeSink.frames_written,
+            nativeSinkState: nativeSink.state,
+            errorsCount: nativeSink.errors_count,
+            reason: nativeSink.error_message || status.diagnostics?.reason,
+          };
+        }
+
         targets.push({
           pluginId: inst.manifest.id,
           name: inst.manifest.name,
           enabled: inst.enabled,
           status,
           plugin: outPlugin,
+          nativeSink,
         });
       }
     });
@@ -137,6 +266,7 @@ class OutputRouter {
     if (outPlugin && typeof outPlugin.startOutput === 'function') {
       try {
         const success = await outPlugin.startOutput(config as any);
+        await this.refreshNativeSinks();
         this.notify();
         return Boolean(success);
       } catch (err: any) {
@@ -145,6 +275,7 @@ class OutputRouter {
       }
     }
 
+    await this.refreshNativeSinks();
     this.notify();
     return true;
   }
@@ -156,10 +287,16 @@ class OutputRouter {
     const inst = pluginHost.getPlugin(pluginId);
     if (!inst || !inst.plugin) return false;
 
+    // If an associated native sink is active, unregister it
+    if (this.nativeSinks.has(pluginId)) {
+      await this.unregisterNativeSink(pluginId);
+    }
+
     const outPlugin = inst.plugin as unknown as OutputPlugin;
     if (outPlugin && typeof outPlugin.stopOutput === 'function') {
       try {
         const success = await outPlugin.stopOutput();
+        await this.refreshNativeSinks();
         this.notify();
         return Boolean(success);
       } catch (err: any) {
@@ -168,6 +305,7 @@ class OutputRouter {
       }
     }
 
+    await this.refreshNativeSinks();
     this.notify();
     return true;
   }
@@ -195,6 +333,10 @@ class OutputRouter {
   }
 
   public dispose() {
+    if (this.pollTimer) {
+      clearInterval(this.pollTimer);
+      this.pollTimer = null;
+    }
     if (this.busUnsub) {
       this.busUnsub();
       this.busUnsub = null;

@@ -40,8 +40,10 @@ pub struct AudioEngine {
     // Tap distribution
     encoder_tap_tx: Arc<Mutex<Option<Sender<Vec<f32>>>>>,
     recorder_tap_tx: Arc<Mutex<Option<Sender<Vec<f32>>>>>,
+    media_sink_tap_tx: Arc<Mutex<Option<Sender<Arc<Vec<f32>>>>>>,
     dropped_encoder_frames: Arc<AtomicU64>,
     dropped_recorder_frames: Arc<AtomicU64>,
+    dropped_media_sink_frames: Arc<AtomicU64>,
 
     // Hardware capture stream
     capture_stream: Arc<Mutex<Option<AudioCaptureStream>>>,
@@ -82,8 +84,10 @@ impl AudioEngine {
             underrun_count: Arc::new(AtomicU64::new(0)),
             encoder_tap_tx: Arc::new(Mutex::new(None)),
             recorder_tap_tx: Arc::new(Mutex::new(None)),
+            media_sink_tap_tx: Arc::new(Mutex::new(None)),
             dropped_encoder_frames: Arc::new(AtomicU64::new(0)),
             dropped_recorder_frames: Arc::new(AtomicU64::new(0)),
+            dropped_media_sink_frames: Arc::new(AtomicU64::new(0)),
             capture_stream: Arc::new(Mutex::new(None)),
             consumer_slot: Arc::new(Mutex::new(None)),
             monitor_manager: monitor,
@@ -124,6 +128,18 @@ impl AudioEngine {
     /// Unsubscribe recorder worker
     pub fn unsubscribe_recorder_tap(&self) {
         *self.recorder_tap_tx.lock() = None;
+    }
+
+    /// Subscribe NativeOutputRouter to Master PCM Tap
+    pub fn subscribe_media_sink_tap(&self) -> Receiver<Arc<Vec<f32>>> {
+        let (tx, rx) = bounded(TAP_QUEUE_CAPACITY);
+        *self.media_sink_tap_tx.lock() = Some(tx);
+        rx
+    }
+
+    /// Unsubscribe NativeOutputRouter from Master PCM Tap
+    pub fn unsubscribe_media_sink_tap(&self) {
+        *self.media_sink_tap_tx.lock() = None;
     }
 
     /// Start hardware CPAL capture on the selected device
@@ -254,8 +270,10 @@ impl AudioEngine {
         let consumer_slot = self.consumer_slot.clone();
         let encoder_tap_tx = self.encoder_tap_tx.clone();
         let recorder_tap_tx = self.recorder_tap_tx.clone();
+        let media_sink_tap_tx = self.media_sink_tap_tx.clone();
         let dropped_enc = self.dropped_encoder_frames.clone();
         let dropped_rec = self.dropped_recorder_frames.clone();
+        let dropped_sink = self.dropped_media_sink_frames.clone();
         let monitor = self.monitor_manager.clone();
         let playback = self.playback_manager.clone();
 
@@ -382,11 +400,13 @@ impl AudioEngine {
                     monitor.push_master_samples(&master_sum);
                 }
 
-                // 10. Distribute to master output tap subscribers (encoder & recorder)
+                // 10. Distribute to master output tap subscribers (encoder, recorder, media sinks)
+                let block_arc = Arc::new(master_sum.clone());
+
                 {
                     let enc_guard = encoder_tap_tx.lock();
                     if let Some(tx) = enc_guard.as_ref() {
-                        match tx.try_send(master_sum.clone()) {
+                        match tx.try_send((*block_arc).clone()) {
                             Ok(()) => {}
                             Err(TrySendError::Full(_)) => {
                                 dropped_enc.fetch_add(1, Ordering::Relaxed);
@@ -399,10 +419,23 @@ impl AudioEngine {
                 {
                     let rec_guard = recorder_tap_tx.lock();
                     if let Some(tx) = rec_guard.as_ref() {
-                        match tx.try_send(master_sum.clone()) {
+                        match tx.try_send((*block_arc).clone()) {
                             Ok(()) => {}
                             Err(TrySendError::Full(_)) => {
                                 dropped_rec.fetch_add(1, Ordering::Relaxed);
+                            }
+                            Err(TrySendError::Disconnected(_)) => {}
+                        }
+                    }
+                }
+
+                {
+                    let sink_guard = media_sink_tap_tx.lock();
+                    if let Some(tx) = sink_guard.as_ref() {
+                        match tx.try_send(block_arc.clone()) {
+                            Ok(()) => {}
+                            Err(TrySendError::Full(_)) => {
+                                dropped_sink.fetch_add(1, Ordering::Relaxed);
                             }
                             Err(TrySendError::Disconnected(_)) => {}
                         }

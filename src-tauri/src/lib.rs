@@ -80,6 +80,10 @@ pub fn run() {
             transcript_start,
             transcript_stop,
             transcript_get_segments,
+            native_output_get_sinks,
+            native_output_register_reference_sink,
+            native_output_register_rtmp_sink,
+            native_output_unregister_sink,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

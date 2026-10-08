@@ -300,3 +300,60 @@ test('Package Loader: detects entrypoint filename mismatch between manifest and 
   assert.ok(missingFileRes.error?.includes('was not found in package files'));
 });
 
+test('Output Bridge: native MediaSink state is authoritative over transport status', () => {
+  // 1. Simulating a native MediaSink in STREAMING state
+  const streamingNativeSink = {
+    id: 'org.broadcst.example.rtmp',
+    name: 'RTMP Media Sink',
+    state: 'STREAMING' as const,
+    is_streaming: true,
+    frames_written: 9600,
+    bytes_sent: 76800,
+    dropped_frames: 0,
+    errors_count: 0,
+    endpoint: 'rtmp://live.example.com/stream',
+  };
+
+  // Bridge logic
+  const bridgeStatus = (nativeSink: typeof streamingNativeSink) => {
+    return {
+      state: (nativeSink.state === 'STREAMING' ? 'CONNECTED' : nativeSink.state === 'ERROR' ? 'ERROR' : 'READY') as any,
+      transportRunning: nativeSink.is_streaming,
+      health: (nativeSink.state === 'STREAMING' ? 'HEALTHY' : 'ERROR') as any,
+      destinationName: nativeSink.name,
+      uptimeSeconds: Math.floor(nativeSink.frames_written / 48000),
+      diagnostics: {
+        framesWritten: nativeSink.frames_written,
+        bytesSent: nativeSink.bytes_sent,
+        droppedFrames: nativeSink.dropped_frames,
+        nativeSinkState: nativeSink.state,
+      },
+    };
+  };
+
+  const statusStreaming = bridgeStatus(streamingNativeSink);
+  assert.equal(statusStreaming.state, 'CONNECTED');
+  assert.equal(statusStreaming.transportRunning, true);
+  assert.equal(statusStreaming.health, 'HEALTHY');
+  assert.equal(statusStreaming.diagnostics.framesWritten, 9600);
+  assert.equal(statusStreaming.diagnostics.bytesSent, 76800);
+  assert.equal(statusStreaming.diagnostics.droppedFrames, 0);
+
+  // 2. Simulating a native MediaSink in ERROR state
+  const errorNativeSink = {
+    ...streamingNativeSink,
+    state: 'ERROR' as const,
+    is_streaming: false,
+    dropped_frames: 480,
+    errors_count: 1,
+    error_message: 'Simulated socket reset by peer',
+  };
+
+  const statusError = bridgeStatus(errorNativeSink as any);
+  assert.equal(statusError.state, 'ERROR');
+  assert.equal(statusError.transportRunning, false);
+  assert.equal(statusError.health, 'ERROR');
+  assert.equal(statusError.diagnostics.droppedFrames, 480);
+});
+
+

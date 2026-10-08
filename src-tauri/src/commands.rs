@@ -1025,3 +1025,85 @@ pub async fn transcript_stop() -> Result<TranscriptStatus, String> {
 pub async fn transcript_get_segments() -> Result<Vec<TranscriptSegment>, String> {
     Ok(vec![])
 }
+
+// ==========================================
+// NATIVE MEDIA SINK & OUTPUT ROUTER CONTROLS
+// ==========================================
+
+#[command]
+pub async fn native_output_get_sinks(
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::audio::sink::MediaSinkStatusDto>, String> {
+    Ok(state.output_router.get_sink_statuses())
+}
+
+#[command]
+pub async fn native_output_register_reference_sink(
+    state: State<'_, AppState>,
+    id: Option<String>,
+    name: Option<String>,
+) -> Result<crate::audio::sink::MediaSinkStatusDto, String> {
+    let sink_id = id.unwrap_or_else(|| "reference-diagnostic-sink".to_string());
+    let sink_name = name.unwrap_or_else(|| "Native Reference Diagnostic Sink".to_string());
+
+    let config = crate::audio::sink::MediaSinkConfig {
+        id: sink_id.clone(),
+        name: sink_name,
+        sample_rate: 48000,
+        channels: 2,
+        sample_format: crate::audio::sink::MediaSampleFormat::F32Le,
+        frame_size: 480,
+        endpoint: None,
+    };
+
+    let sink = Box::new(crate::audio::sink::ReferenceMediaSink::new());
+    state
+        .output_router
+        .register_sink(sink, config)
+        .map_err(|e| e.to_string())?;
+
+    let statuses = state.output_router.get_sink_statuses();
+    statuses
+        .into_iter()
+        .find(|s| s.id == sink_id)
+        .ok_or_else(|| "Sink registered but status not found".to_string())
+}
+
+#[command]
+pub async fn native_output_register_rtmp_sink(
+    state: State<'_, AppState>,
+    id: String,
+    name: String,
+    endpoint: Option<String>,
+) -> Result<crate::audio::sink::MediaSinkStatusDto, String> {
+    let config = crate::audio::sink::MediaSinkConfig {
+        id: id.clone(),
+        name: name.clone(),
+        sample_rate: 48000,
+        channels: 2,
+        sample_format: crate::audio::sink::MediaSampleFormat::F32Le,
+        frame_size: 480,
+        endpoint: endpoint.clone(),
+    };
+
+    let sink = Box::new(crate::audio::sink::RtmpMediaSink::new(id.clone(), name, endpoint));
+    state
+        .output_router
+        .register_sink(sink, config)
+        .map_err(|e| e.to_string())?;
+
+    let statuses = state.output_router.get_sink_statuses();
+    statuses
+        .into_iter()
+        .find(|s| s.id == id)
+        .ok_or_else(|| "Sink registered but status not found".to_string())
+}
+
+#[command]
+pub async fn native_output_unregister_sink(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<bool, String> {
+    Ok(state.output_router.unregister_sink(&id))
+}
+

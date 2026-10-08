@@ -183,6 +183,25 @@ export interface CommandMap {
 
   // Metadata
   'metadata.set': { params: { metadata: TrackMetadata }; result: void };
+
+  // Native Output Router & Media Sinks
+  'native_output.get_sinks': { params: void; result: NativeMediaSinkStatus[] };
+  'native_output.register_reference_sink': { params: { id: string; name: string }; result: void };
+  'native_output.register_rtmp_sink': { params: { id: string; name: string; endpoint: string }; result: void };
+  'native_output.unregister_sink': { params: { id: string }; result: boolean };
+}
+
+export interface NativeMediaSinkStatus {
+  id: string;
+  name: string;
+  state: 'OPENED' | 'STREAMING' | 'FLUSHING' | 'STOPPED' | 'CLOSED' | 'ERROR';
+  is_streaming: boolean;
+  frames_written: number;
+  bytes_sent: number;
+  dropped_frames: number;
+  errors_count: number;
+  endpoint?: string;
+  error_message?: string;
 }
 
 export type CommandName = keyof CommandMap;
